@@ -1,0 +1,42 @@
+# LeRobot robot configuration for MassageRobot
+# Usage: --robot.type=massage_robot --robot.config=configs/massage_robot.yaml
+
+robot_type: massage_robot
+port: COM3
+baudrate: 115200
+num_joints: 6
+
+joint_names:
+  - shoulder_pan    # Joint 1 — base rotation
+  - shoulder_lift   # Joint 2 — shoulder lift
+  - elbow_flex      # Joint 3 — elbow
+  - wrist_flex      # Joint 4 — wrist flex
+  - wrist_roll      # Joint 5 — wrist roll
+  - gripper         # Joint 6 — gripper/end-effector
+
+# Camera configuration
+cameras:
+  cam_top:
+    type: opencv
+    index: 1
+    fps: 30
+    width: 640
+    height: 480
+    color_mode: rgb
+
+# Future: add second camera for better viewpoint
+#  cam_side:
+#    type: opencv
+#    index: 1
+#    fps: 30
+#    width: 640
+#    height: 480
+#    color_mode: rgb
+
+# Training settings (for reference, actual training uses train.py args)
+training:
+  policy: smolvla
+  fps: 30
+  episode_time_s: 20
+  warmup_time_s: 5
+  reset_time_s: 10

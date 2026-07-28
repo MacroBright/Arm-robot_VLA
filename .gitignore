@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual env
+.venv/
+
+# IDE
+.vscode/
+.codeartsdoer/
+.claude/
+
+# Large data (分离管理)
+datasets/
+outputs/
+
+# Backups
+backups/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+MUJOCO_LOG.TXT
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.token

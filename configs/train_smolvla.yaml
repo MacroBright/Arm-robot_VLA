@@ -1,0 +1,32 @@
+# SmolVLA training configuration for massage robot
+# Usage: python lerobot/scripts/train.py --config=configs/train_smolvla.yaml
+
+policy:
+  type: smolvla
+  # Use pre-trained base model for fine-tuning
+  path: lerobot/smolvla_base
+
+dataset:
+  repo_id: ./datasets/massage_v1
+  local_files_only: true
+
+training:
+  batch_size: 64
+  steps: 200000
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-6
+  grad_clip_norm: 1.0
+
+  # Hardware
+  device: cuda  # "cpu" if no GPU
+
+  # Logging
+  wandb:
+    enable: false
+  log_interval: 100
+  save_interval: 10000
+  eval_interval: 50000
+
+output:
+  dir: outputs/train/smolvla_massage
+  job_name: smolvla_massage_v1

@@ -28,6 +28,7 @@ import os
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -761,6 +762,9 @@ def main() -> None:
                         help="显示末端运动轨迹, N=保留点数 (如 --trail 500)")
     parser.add_argument("--no-camera", action="store_true",
                         help="禁用相机渲染子进程 (camera_server.py)")
+    parser.add_argument("--camera-gl", type=str, default="glfw",
+                        choices=["glfw", "osmesa", "egl"],
+                        help="相机渲染 GL 后端 (headless 服务器用 osmesa)")
     args = parser.parse_args()
 
     # ── 检查场景文件 ──
@@ -794,13 +798,12 @@ def main() -> None:
     camera_proc = None
     if not getattr(args, 'no_camera', False):
         # 启动相机渲染子进程 (独立进程隔离 GL context, 避免 viewer segfault)
-        venv_python = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            ".venv", "bin", "python3")
+        # 用当前 Python 解释器 (兼容 venv / conda / system)
+        python_exe = sys.executable
         camera_proc = subprocess.Popen(
-            [venv_python, str(Path(__file__).resolve().parent / "camera_server.py"),
+            [python_exe, str(Path(__file__).resolve().parent / "camera_server.py"),
              "--port", str(args.port), "--scene", str(scene_path)],
-            env={**os.environ, "MUJOCO_GL": "glfw"})
+            env={**os.environ, "MUJOCO_GL": args.camera_gl})
         log(f"相机渲染子进程已启动 (PID {camera_proc.pid})")
 
     # ── 主循环: 物理步进 + viewer ──

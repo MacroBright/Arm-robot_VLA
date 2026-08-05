@@ -108,7 +108,29 @@
 - [ ] 手动示教数据采集跑通
 - [ ] 小规模训练验证 (SmolVLA)
 
-## 七、参考
+> **环境重装提示**：Ubuntu conda 环境（`smolvla`，envs 在 E盘 NTFS）的安装步骤与
+> pip editable `.pth` 修复见 `README.md` §2.5。
+
+## 七、多窗口并行工作流
+
+本项目按技术层拆分为 4 个独立会话窗口。如需自动拆分其他项目，使用 skill:
+- [split-project-workstreams](https://github.com/MacroBright/claude_skills-autoworkstreams)，每个窗口专注一类任务：
+
+| 窗口 | 简报文件 | 职责 |
+|------|----------|------|
+| 🎮 仿真与数据 | `.claude/workstreams/01-simulation-data.md` | MuJoCo 仿真、手柄遥操作、数据采集 |
+| 🧠 模型训练 | `.claude/workstreams/02-model-training.md` | SmolVLA 训练、评估、远程部署 |
+| 🔧 固件与硬件 | `.claude/workstreams/03-firmware-hardware.md` | STM32 固件、MassageRobot 适配器 |
+| 📝 文档与知识 | `.claude/workstreams/04-docs-knowledge.md` | 文档、ADR、实验记录、知识库 |
+
+**用法**: 新开一个 Claude Code 窗口，输入：
+```
+加载 .claude/workstreams/0X-xxx.md，当前任务：[描述具体任务]
+```
+
+**依赖关系**: 窗口1 → 窗口2 (数据流) ，窗口3 ↔ 窗口1 (协议对齐)，窗口4 → 所有窗口 (记录)。
+
+## 八、参考
 
 - 项目索引: `E:\Liang\Documents\Bright的知识库\基于VLA的机械臂设计\项目索引与笔记地图.md`
 - 参考硬件: `d:\robo arm\software\zero-robotic-arm`

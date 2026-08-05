@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "LeRobot integration for STM32-mediated Emm_V5 CAN bus massage robotic arm"
 requires-python = ">=3.10"
 dependencies = [
-    "lerobot",
+    "lerobot==0.4.4",
     "pyserial",
     "numpy",
     "opencv-python",

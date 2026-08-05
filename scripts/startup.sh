@@ -10,7 +10,7 @@ echo "  共享内存已清理"
 echo ""
 echo "=== 启动 MuJoCo 仿真 (后台) ==="
 cd /home/bright/office/Arm-robot_VLA
-MUJOCO_GL=glfw .venv/bin/python3 scripts/mujoco_sim.py --ik --trail 500 --viewer &
+MUJOCO_GL=glfw /home/bright/win_office/conda/envs/smolvla/bin/python scripts/mujoco_sim.py --ik --trail 500 --viewer &
 SIM_PID=$!
 
 # 等 mujoco + camera_server 初始化
@@ -18,14 +18,14 @@ echo "  等待 MuJoCo 初始化 (4s)..."
 sleep 4
 if ! kill -0 $SIM_PID 2>/dev/null; then
     echo "  错误: MuJoCo 仿真启动失败, 请手动运行查看原因:"
-    echo "  .venv/bin/python3 scripts/mujoco_sim.py --ik --viewer"
+    echo "  /home/bright/win_office/conda/envs/smolvla/bin/python scripts/mujoco_sim.py --ik --viewer"
     exit 1
 fi
 echo "  MuJoCo 运行中 (PID $SIM_PID)"
 
 echo ""
 echo "=== 启动手柄控制 (后台) ==="
-.venv/bin/python3 scripts/joystick_control.py --port socket://localhost:5555 --camera 0 &
+/home/bright/win_office/conda/envs/smolvla/bin/python scripts/joystick_control.py --port socket://localhost:5555 --camera 0 &
 JOY_PID=$!
 echo "  手柄控制运行中 (PID $JOY_PID)"
 
@@ -33,7 +33,7 @@ echo ""
 echo "=== 启动控制台 Hub ==="
 echo "  操作: 鼠标点击按钮 | R=开始/停止录制 | Q=退出"
 echo ""
-.venv/bin/python3 scripts/control_hub.py --port 5555 --fps 25
+/home/bright/win_office/conda/envs/smolvla/bin/python scripts/control_hub.py --port 5555 --fps 25
 
 # Hub 退出后清理
 echo ""

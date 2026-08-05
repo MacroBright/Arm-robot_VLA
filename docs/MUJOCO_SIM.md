@@ -36,8 +36,8 @@ record_sim.py        ──SharedMemory──→  ├─ mj_step @ 50Hz
 ### 2.1 安装依赖
 
 ```bash
-# 激活虚拟环境
-source .venv/bin/activate        # Linux/Mac
+# 激活 conda 环境
+conda activate smolvla          # Linux (conda)
 # .venv\Scripts\Activate.ps1     # Windows
 
 # 核心依赖
@@ -48,8 +48,8 @@ pip install pyserial              # 串口协议 (socket:// 模式不需要真�
 # 手柄遥控 (仅桌面环境)
 pip install pygame                # USB 手柄读取
 
-# LeRobot 插件 (可选, 用于 MassageRobot 集成)
-pip install -e lerobot_robot_massage
+# LeRobot 插件 (可选, 用于 MassageRobot 集成; Linux 需 compat editable, 见 README §2.5)
+pip install -e lerobot_robot_massage --config-settings editable_mode=compat
 ```
 
 ### 2.2 验证安装
@@ -115,14 +115,9 @@ python scripts/mujoco_sim.py --no-viewer
 确保 `mujoco_sim.py` 已在另一个终端运行：
 
 ```bash
-bright@bright-Legion-Y9000P-IAH7H:~$ # 方式 1: 直接用 venv 的 python
-.venv/bin/python3 scripts/joystick_control.py --port socket://localhost:5555 --camera 0
-bash: .venv/bin/python3: 没有那个文件或目录
-bright@bright-Legion-Y9000P-IAH7H:~$ .venv/bin/pip install pygame opencv-python pyserial
-.venv/bin/pip install -e lerobot_robot_massage
-bash: .venv/bin/pip: 没有那个文件或目录
-bash: .venv/bin/pip: 没有那个文件或目录
-
+# 先激活 conda 环境
+conda activate smolvla
+python scripts/joystick_control.py --port socket://localhost:5555 --camera 0
 ```
 
 ### 4.2 按键映射

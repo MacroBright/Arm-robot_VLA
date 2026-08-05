@@ -74,12 +74,52 @@ pip install pygame
 # 验证核心库
 python -c "import lerobot; print(f'lerobot {lerobot.__version__}')"
 
-# 验证插件自动发现
-python -c "from lerobot.robots import RobotConfig; RobotConfig.get_choice_class('massage_robot'); print('OK')"
+# 验证插件自动发现（须先 import 插件包，lerobot 0.4.4 裸 import 不自动发现）
+python -c "import lerobot_robot_massage; from lerobot.robots import RobotConfig; RobotConfig.get_choice_class('massage_robot'); print('OK')"
 
 # 不接硬件验证接口规范
 python scripts\verify_interface.py
 ```
+
+### 2.5 Ubuntu conda 部署（envs 在 NTFS 盘）
+
+> 2026-08-05 实测可用。conda 环境 `smolvla`（Python 3.10）实际存放在
+> `/home/bright/win_office/conda/envs/`（E盘 NTFS），Miniconda 本体在系统盘。
+
+```bash
+conda activate smolvla
+
+# pip 走清华源（大文件偶发 403，加重试）
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+pip install --retries 8 --timeout 60 lerobot        # 实测解析到 0.4.4
+
+# 插件包必须用 compat 模式装 editable（默认模式生成的 .pth 会坏，见下）
+pip install -e /home/bright/office/Arm-robot_VLA/lerobot_robot_massage --config-settings editable_mode=compat
+pip install pygame
+pip install mujoco==3.10.0          # MuJoCo 物理仿真 (env 重建后必装; 漏装时 mujoco_sim.py 直接报"未安装 mujoco")
+```
+
+**⚠️ pip editable `.pth` 路径 bug（装完必查）**：`pip install -e` 生成的
+`site-packages/__editable__.lerobot_robot_massage-0.1.0.pth` 指向包目录自身
+`.../Arm-robot_VLA/lerobot_robot_massage`，导致 `import lerobot_robot_massage` 失败
+（`importlib.metadata` 可见发行版但模块不可导入，`massage_robot` 注册也静默失效）。
+**修复**：把 `.pth` 内容改成包**父目录**：
+
+```bash
+echo '/home/bright/office/Arm-robot_VLA' > \
+  /home/bright/win_office/conda/envs/smolvla/lib/python3.10/site-packages/__editable__.lerobot_robot_massage-0.1.0.pth
+```
+
+**验证**：
+
+```bash
+conda activate smolvla
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # 预期: 2.10.0+cu128 True
+python -c "import lerobot_robot_massage; from lerobot.robots import RobotConfig; print(RobotConfig.get_choice_class('massage_robot').__name__)"  # 预期: MassageRobotConfig
+```
+
+> 说明：`register_third_party_plugins()` 仅在 lerobot CLI（`lerobot-record`/`lerobot-train` 等）内自动调用，
+> 日常跑 CLI 无需手动 import 插件包。
 
 详细部署步骤请见 `docs/DEPLOYMENT.md` 第 3–4 章。
 
@@ -135,7 +175,7 @@ python scripts/joystick_control.py --port COM5 --camera 1
 | 软件 | 版本 | 用途 |
 |------|------|------|
 | Python | 3.12+ | 运行时 |
-| LeRobot | 0.6.0 (PyPI) | 数据采集/训练/推理框架 |
+| LeRobot | 0.4.4 (PyPI) | 数据采集/训练/推理框架 |
 | PyTorch | 2.11+ | 深度学习引擎 |
 | OpenCV | 4.x | 相机采集 |
 | pygame | 2.x | 手柄输入 |

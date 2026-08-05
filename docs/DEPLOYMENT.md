@@ -788,7 +788,7 @@ python scripts\test_serial.py --port COM5
 python scripts\verify_interface.py
 
 # 更新插件（修改后无需重装，-e 模式自动生效）
-# 只需在 .venv 激活状态下重新导入即可
+# 只需在环境激活状态下重新导入即可
 ```
 
 ## 附录 B：文件索引

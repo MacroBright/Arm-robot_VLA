@@ -5,7 +5,7 @@ r"""USB 手柄遥控机械臂脚本。
 需要 pygame 和 pyserial。首次使用先: pip install pygame
 
 用法:
-  .venv/Scripts/python.exe scripts/joystick_control.py --port COM5
+  conda activate smolvla && python scripts/joystick_control.py --port COM5
   # 仿真模式: --port socket://localhost:5555
   # 速度调节: --speed 0.3 --joint-step 0.5 --joint-speed 3
 

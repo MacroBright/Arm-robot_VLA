@@ -10,8 +10,8 @@
 |------|------|
 | **OS** | Ubuntu 26.04 LTS (Resolute Raccoon) |
 | **内核** | Linux 7.0.0-28-generic x86_64 |
-| **Python** | 3.14.4 (系统级) |
-| **虚拟环境** | `.venv/` (venv, symlink → /usr/bin/python3) |
+| **Python** | 3.10 (conda 环境 `smolvla`) |
+| **虚拟环境** | conda `smolvla` (lerobot 0.4.4, torch 2.10.0+cu128) |
 | **MuJoCo** | 3.10.0 (Apache 2.0, 无需 license key) |
 | **手柄** | Nintendo Switch Pro Controller (USB, 057e:2009) |
 | **相机** | USB 摄像头 (/dev/video0) |
@@ -26,11 +26,12 @@
 ```bash
 sudo apt update
 sudo apt install -y \
-    python3.14-venv \
     libgl1 libglx0 libegl1 \
     libx11-6 libxrandr2 libxinerama1 libxi6 libxcursor1 \
     libglvnd0 mesa-libgallium
 ```
+
+> Python 由 conda 提供（环境 `smolvla`），无需系统 python-venv。若目标机器尚未装 Miniconda，先按 https://docs.conda.io/en/latest/miniconda.html 安装。
 
 ### 2.2 无头模式额外依赖 (服务器 / 无显示器)
 
@@ -65,27 +66,29 @@ scp -r user@source:/home/bright/office/Arm-robot_VLA ~/office/Arm-robot_VLA
 # 或使用 U 盘 / 移动硬盘复制
 ```
 
-### Step 2: 创建虚拟环境
+### Step 2: 创建 conda 环境
 
-> **建议在目标机器上重建 `.venv`**，不要直接复制。因为当前 `.venv` 里混入了 1.1GB 的 Windows 二进制文件（`.dll`/`.exe`/`.pyd`），而且 Python 路径是 symlink 到系统 Python 的。
+> **用 conda 建环境，不建项目内 `.venv`**。本机旧 `.venv` 已退役并备份至 `backups/venv-20260805/`（勿删勿改）。
 
 ```bash
+# 若目标机器没有 Miniconda，先安装并初始化
+#   https://docs.conda.io/en/latest/miniconda.html
+source ~/miniconda3/etc/profile.d/conda.sh
+
 cd ~/office/Arm-robot_VLA
 
-# 删除旧的 .venv (如果复制过来了)
-rm -rf .venv
-
-# 创建新的虚拟环境
-python3 -m venv .venv
-
-# 激活
-source .venv/bin/activate
+# 创建并激活环境 (Python 3.10)
+conda create -n smolvla python=3.10 -y
+conda activate smolvla
 ```
+
+> 依赖安装、插件 editable `.pth` 修复、验证命令的完整步骤见 README §2.5「Ubuntu conda 部署」。
 
 ### Step 3: 安装 Python 依赖
 
 ```bash
-# 确保在 .venv 激活状态
+# 确保在 smolvla 环境激活状态
+conda activate smolvla
 pip install --upgrade pip
 
 # 核心依赖
@@ -98,14 +101,14 @@ pip install pillow                 # 图像处理
 pip install PyOpenGL               # OpenGL 绑定
 pip install pyserial               # 串口通信 (STM32)
 
-# LeRobot 插件 (开发模式安装)
-pip install -e lerobot_robot_massage/
+# LeRobot 插件 (Linux 需 compat editable 模式, 见 README §2.5)
+pip install -e lerobot_robot_massage/ --config-settings editable_mode=compat
 ```
 
 > 或者从当前机器导出精确版本：
 > ```bash
 > # 在源机器上
-> .venv/bin/pip freeze --local > /tmp/requirements_freeze.txt
+> pip freeze --local > /tmp/requirements_freeze.txt
 > # 拷贝到目标机器后
 > pip install -r requirements_freeze.txt
 > ```
@@ -227,12 +230,12 @@ Arm-robot_VLA/
 
 ### Q: 目标机器 Python 版本不一致怎么办？
 
-项目声明 `requires-python = ">=3.10"`，理论上 Python 3.10+ 都可以。但建议和目标机器保持一致：
+项目声明 `requires-python = ">=3.10"`，用 conda 创建对应版本的环境即可（conda 自带 python，无需系统安装）：
 
 ```bash
-# 如果目标机器没有 Python 3.14，可以用 3.12
-sudo apt install python3.12-venv
-python3.12 -m venv .venv
+# 例如创建 Python 3.10 环境
+conda create -n smolvla python=3.10 -y
+conda activate smolvla
 ```
 
 ### Q: MuJoCo Viewer 窗口是黑色的？
@@ -280,8 +283,7 @@ python scripts/joystick_control.py --port /dev/ttyUSB0
 ## 八、迁移检查清单
 
 - [ ] 系统依赖已安装 (libgl, libx11 等)
-- [ ] Python 3.10+ 可用
-- [ ] `.venv` 已重建并激活
+- [ ] conda 环境 `smolvla` 已创建并激活
 - [ ] `pip install` 所有依赖成功
 - [ ] `import mujoco` 通过
 - [ ] `import cv2` 通过

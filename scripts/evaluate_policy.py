@@ -176,14 +176,15 @@ def load_model(checkpoint_dir: str):
 
 
 def run_episode(policy, device, sim, shm_path, shm_ee_path, tokenizer,
-                model_dtype, max_steps=500, fps=10):
+                model_dtype, max_steps=500, fps=10, debug=False):
     """运行单次评估 episode — 返回是否触碰目标球。"""
     # 读取初始状态
     state = sim.get_state()
-    if state is None: return False, 0
+    if state is None: return False, 0, None
     angles, _, _ = state
     interval = 1.0 / fps
     touched = False
+    debug_log = [] if debug else None
 
     for step in range(max_steps):
         t0 = time.monotonic()
@@ -201,9 +202,19 @@ def run_episode(policy, device, sim, shm_path, shm_ee_path, tokenizer,
         target = sim.get_target()
         if target is None: break
         # 检测触碰
-        ee_pos, _ = sim.get_ee() or (None, None)
-        if ee_pos is not None and np.linalg.norm(ee_pos - target) < 0.04:
+        ee_pos, ee_rot = sim.get_ee() or (None, None)
+        if ee_pos is not None:
+            dist = float(np.linalg.norm(ee_pos - target))
+        else:
+            dist = -1.0
+        if ee_pos is not None and dist < 0.04:
             touched = True
+            if debug:
+                debug_log.append({
+                    "step": step, "action_deg": action_deg.tolist(),
+                    "current_deg": angles_deg[:6].tolist(), "ee_pos": ee_pos.tolist(),
+                    "target": target.tolist(), "dist": dist,
+                })
             break
 
         # 构建 batch (含 language tokens)
@@ -231,6 +242,16 @@ def run_episode(policy, device, sim, shm_path, shm_ee_path, tokenizer,
         # 发送关节指令 (弧度 → 度)
         action_deg = np.rad2deg(action)
         action_deg = np.clip(action_deg, -180, 180)
+
+        # 诊断日志: 记录前10步、每50步、最后10步
+        if debug and (step < 10 or step % 50 == 0 or step >= max_steps - 10):
+            debug_log.append({
+                "step": step, "action_deg": action_deg.tolist(),
+                "current_deg": angles_deg[:6].tolist(),
+                "ee_pos": ee_pos.tolist() if ee_pos is not None else None,
+                "target": target.tolist(), "dist": dist,
+            })
+
         sim.send_joints(action_deg)
 
         # 限速
@@ -238,7 +259,7 @@ def run_episode(policy, device, sim, shm_path, shm_ee_path, tokenizer,
         if elapsed < interval:
             time.sleep(interval - elapsed)
 
-    return touched, step + 1 if not touched else step + 1
+    return touched, step + 1 if not touched else step + 1, debug_log
 
 
 def main():
@@ -248,6 +269,8 @@ def main():
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--fps", type=int, default=10)
+    parser.add_argument("--debug", action="store_true",
+                        help="打印诊断日志 (action值、关节角、末端距离)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -294,14 +317,32 @@ def main():
         sim._send("target_reset")
         time.sleep(0.5)
 
-        touched, steps = run_episode(
+        touched, steps, debug_log = run_episode(
             policy, device, sim, shm_path, shm_ee_path, tokenizer,
-            model_dtype, args.max_steps, args.fps)
+            model_dtype, args.max_steps, args.fps, debug=args.debug)
         successes += int(touched)
         total_steps += steps
 
         status = "✓ HIT" if touched else "✗ MISS"
         print(f"  Ep {ep+1:>3}/{args.episodes}: {status} ({steps} steps)")
+
+        # 诊断输出
+        if debug_log:
+            print(f"    --- 诊断日志 (ep {ep+1}) ---")
+            for entry in debug_log:
+                ad = entry["action_deg"]
+                cd = entry["current_deg"]
+                print(f"    step={entry['step']:>3d}  "
+                      f"action=[{ad[0]:7.1f} {ad[1]:7.1f} {ad[2]:7.1f} "
+                      f"{ad[3]:7.1f} {ad[4]:7.1f} {ad[5]:7.1f}]  "
+                      f"cur=[{cd[0]:7.1f} {cd[1]:7.1f} {cd[2]:7.1f} "
+                      f"{cd[3]:7.1f} {cd[4]:7.1f} {cd[5]:7.1f}]  "
+                      f"dist={entry['dist']:.3f}")
+                if entry["ee_pos"]:
+                    print(f"           "
+                          f"ee_pos=({entry['ee_pos'][0]:.3f},{entry['ee_pos'][1]:.3f},{entry['ee_pos'][2]:.3f})  "
+                          f"target=({entry['target'][0]:.3f},{entry['target'][1]:.3f},{entry['target'][2]:.3f})")
+            print(f"    --- 诊断结束 ---")
 
     success_rate = successes / args.episodes * 100
     avg_steps = total_steps / args.episodes

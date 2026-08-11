@@ -111,8 +111,8 @@ class MuJoCoArm:
         self._target_pos = list(INIT_POSE_RAD)  # set_joints 目标 (rad)
         self._was_remote_active = False         # remote 下降沿: 松手时锁定当前位置
 
-        # remote_event 状态
-        self._remote_vals = [0.0] * 6
+        # remote_event 状态 (7 参: p0-p5 + p6→J4)
+        self._remote_vals = [0.0] * 7
         self._remote_stamp = 0.0
 
         # 线程安全状态缓存 (物理线程写, TCP 线程读)
@@ -174,8 +174,8 @@ class MuJoCoArm:
 
     # ── 物理步进 ──────────────────────────────────────────────────────
 
-    # ── EMA 滤波状态 (remote_event 平滑) ────────────────────────────
-    _ema_vals: list[float] = [0.0] * 6
+    # ── EMA 滤波状态 (remote_event 平滑, 7 通道含 p6→J4) ─────────────
+    _ema_vals: list[float] = [0.0] * 7
     _ema_initialized: bool = False
 
     def step(self, dt: float) -> None:
@@ -189,7 +189,7 @@ class MuJoCoArm:
                 and any(abs(v) > 1e-3 for v in self._remote_vals)
             )
             freeze = self._freeze_ctrl
-            raw = list(self._remote_vals) if remote_active else [0.0] * 6
+            raw = list(self._remote_vals) if remote_active else [0.0] * 7
             self._ema_initialized = self._ema_initialized and remote_active
             # remote 下降沿: 松手时锁定当前位置 (不下坠)
             if self._was_remote_active and not remote_active:
@@ -209,16 +209,17 @@ class MuJoCoArm:
                 self._ema_vals = list(raw)
                 self._ema_initialized = True
             else:
-                for i in range(6):
+                for i in range(7):
                     self._ema_vals[i] = (alpha * raw[i] +
                                          (1 - alpha) * self._ema_vals[i])
             # 摇杆残余死区 (视觉遥操在 PC 端已做死区)
             for i, val in enumerate(self._ema_vals):
                 if abs(val) < 0.03:
                     self._ema_vals[i] = 0.0
-            # 固件语义 (robot_cmd.c): vx/vy/vz 基座系线速度, p3→J5, p2→J6
-            v_lin, j5_coef, j6_coef = parse_remote_event(self._ema_vals)
+            # 固件语义 (robot_cmd.c): vx/vy/vz 基座系线速度, p6→J4, p3→J5, p2→J6
+            v_lin, j4_coef, j5_coef, j6_coef = parse_remote_event(self._ema_vals)
             v_lin = v_lin * REMOTE_LIN_GAIN           # 系数 → m/s
+            j4_vel = j4_coef * REMOTE_GAIN_RAD        # J4 关节速度 rad/s
             j5_vel = j5_coef * REMOTE_GAIN_RAD        # J5 关节速度 rad/s
             j6_vel = j6_coef * REMOTE_GAIN_RAD        # J6 关节速度 rad/s
             v_ang = np.zeros(3)                       # 固件固定末端方向
@@ -237,26 +238,28 @@ class MuJoCoArm:
             if freeze:
                 self.data.ctrl[:NUM_JOINTS] = 0.0
             elif remote_active and self.use_ik:
-                # 位置 IK (与固件 robot_pid_remote 一致, 末端方向固定), J5/J6 直接关节速度
+                # 位置 IK: J1-J3 驱动末端位置, J4/J5/J6 姿态通道直接关节速度
                 mujoco.mj_jacSite(self.model, self.data,
                                   jac_pos, jac_rot, self._ee_site_id)
                 if np.any(np.abs(v_lin) > 1e-6):
-                    Jp = jac_pos[:, :NUM_JOINTS]
+                    Jp = jac_pos[:, :3]        # 仅 J1-J3 驱动位置
                     JJT = Jp @ Jp.T + lam * lam * np.eye(3)
-                    dq = Jp.T @ np.linalg.solve(JJT, v_lin)
+                    dq = np.zeros(NUM_JOINTS)
+                    dq[:3] = Jp.T @ np.linalg.solve(JJT, v_lin)
                 else:
                     dq = np.zeros(NUM_JOINTS)
-                dq[4] = j5_vel
-                dq[5] = j6_vel
+                dq[3] = j4_vel   # J4 = 手滚转 (p6)
+                dq[4] = j5_vel   # J5 = 手俯仰 (p3)
+                dq[5] = j6_vel   # J6 = p2 (当前置 0)
                 for i in range(NUM_JOINTS):
                     self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - dq[i])
                                          + gravity[i])
             elif remote_active:
-                # 非 IK 路径: 同参数语义 (vx/vy/vz→J1-J3 关节速度近似)
+                # 非 IK 路径: 同参数语义 (vx/vy/vz→J1-J3 关节速度近似, J4/J5/J6 直驱)
                 target_vel = [v_lin[0] * REMOTE_GAIN_RAD,
                               v_lin[1] * REMOTE_GAIN_RAD,
                               v_lin[2] * REMOTE_GAIN_RAD,
-                              0.0, j5_vel, j6_vel]
+                              j4_vel, j5_vel, j6_vel]
                 for i in range(NUM_JOINTS):
                     self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - target_vel[i])
                                          + gravity[i])
@@ -374,7 +377,7 @@ class MuJoCoArm:
             self._target_pos[:] = self.data.qpos[:NUM_JOINTS].copy()
             self.data.qvel[:NUM_JOINTS] = 0.0
             self.remote_enabled = False
-            self._remote_vals = [0.0] * 6
+            self._remote_vals = [0.0] * 7
         log("!! e_stop → 全部关节停止, 退出远程模式")
         return ["ESTOP"]
 
@@ -390,7 +393,7 @@ class MuJoCoArm:
     def _cmd_remote_disable(self) -> list[str]:
         with self._lock:
             self.remote_enabled = False
-            self._remote_vals = [0.0] * 6
+            self._remote_vals = [0.0] * 7
             self._was_remote_active = False
             self._target_pos[:] = INIT_POSE_RAD
         log("remote_disable → 远程模式关闭 (soft_reset)")
@@ -406,11 +409,11 @@ class MuJoCoArm:
 
     def _cmd_remote_event(self, args: list[str]) -> list[str]:
         try:
-            vals = [float(v) for v in args[:6]]
+            vals = [float(v) for v in args[:7]]
         except ValueError:
             log(f"!! remote_event 参数无法解析: {args}")
             return []
-        while len(vals) < 6:
+        while len(vals) < 7:
             vals.append(0.0)
         with self._lock:
             if self.remote_enabled:

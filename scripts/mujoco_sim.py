@@ -57,7 +57,7 @@ REMOTE_ANG_GAIN = 1.5             # Cartesian 角速度 (rad/s per unit)
 IK_DAMPING = 0.05                 # 阻尼伪逆 λ (防奇异)
 # Python 端 PID: 每关节 kp/kv
 PID_KP = [10.0, 50.0, 30.0, 15.0, 8.0, 3.0]
-PID_KV = [1.0, 3.0, 2.0, 10.0, 0.8, 0.3]
+PID_KV = [1.0, 3.0, 2.0, 10.0, 3.0, 3.0]
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480

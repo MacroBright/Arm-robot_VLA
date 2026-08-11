@@ -463,6 +463,8 @@ class MuJoCoArm:
         with self._lock:
             self._target_pos[:] = INIT_POSE_RAD
             self._freeze_ctrl = False
+            self._was_remote_active = False   # 关键: 阻止"松手锁位"覆盖 INIT 目标
+            self.control_mode = "joint"
         log("soft_reset → 回预设初始角度")
         return []
 

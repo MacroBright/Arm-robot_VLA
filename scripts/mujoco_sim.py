@@ -90,6 +90,8 @@ class MuJoCoArm:
         # 预取末端 site ID (Jacobian IK 用)
         self._ee_site_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_SITE, "ee_site")
+        self._wrist_site_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_SITE, "wrist_site")
 
         # 初始化到 soft_reset 姿态
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY,
@@ -120,6 +122,7 @@ class MuJoCoArm:
         self._cached_qvel = [0.0] * NUM_JOINTS
         self._cached_loads = [0.0] * NUM_JOINTS
         self._cached_ee_pos = [0.0, 0.0, 0.0]
+        self._cached_wrist_pos = [0.0, 0.0, 0.0]
         self._cached_target_pos = [0.0, 0.0, 0.0]
 
         # ── 相机 ID (由 camera_server.py 子进程渲染) ──
@@ -144,6 +147,7 @@ class MuJoCoArm:
         self._randomize_target()
         # 缓存初始末端+目标位置 (mj_forward 已在 _move_target 中调用)
         self._cached_ee_pos[:] = self.data.site_xpos[self._ee_site_id]
+        self._cached_wrist_pos[:] = self.data.site_xpos[self._wrist_site_id]
         self._cached_target_pos[:] = self.data.xpos[self._target_body_id]
 
         # ── 共享内存帧缓冲 ──
@@ -278,6 +282,7 @@ class MuJoCoArm:
             self._cached_qvel = self.data.qvel[:NUM_JOINTS].copy()
             self._cached_loads = self.data.qfrc_actuator[:NUM_JOINTS].copy()
             self._cached_ee_pos = self.data.site_xpos[self._ee_site_id].copy()
+            self._cached_wrist_pos = self.data.site_xpos[self._wrist_site_id].copy()
             self._cached_target_pos = self.data.xpos[self._target_body_id].copy()
 
         # (4b) 目标小球触碰检测
@@ -332,6 +337,8 @@ class MuJoCoArm:
             return self._cmd_get_mode()
         if cmd == "get_ee":
             return self._cmd_get_ee()
+        if cmd == "get_wrist":
+            return self._cmd_get_wrist()
         if cmd == "target_pos":
             return self._cmd_target_pos()
         if cmd == "target_reset":
@@ -519,6 +526,12 @@ class MuJoCoArm:
             tp = list(self._cached_target_pos)
         return [f"EE:{ep[0]:.4f},{ep[1]:.4f},{ep[2]:.4f},"
                 f"{tp[0]:.4f},{tp[1]:.4f},{tp[2]:.4f}"]
+
+    def _cmd_get_wrist(self) -> list[str]:
+        """返回腕心世界坐标 (m). 位置环反馈用, J4/J5/J6 旋转不移动腕心."""
+        with self._lock:
+            wp = list(self._cached_wrist_pos)
+        return [f"WRIST:{wp[0]:.4f},{wp[1]:.4f},{wp[2]:.4f}"]
 
     def _cmd_target_pos(self) -> list[str]:
         """返回目标小球当前位置。"""

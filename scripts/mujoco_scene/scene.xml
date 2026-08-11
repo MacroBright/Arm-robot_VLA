@@ -96,6 +96,9 @@
                   type="mesh" mesh="link3.STL" class="visual"
                   material="defalut_visual"/>
 
+            <!-- 腕心: J4 旋转轴点, 位置环反馈用 (J4/J5/J6 旋转不移动它) -->
+            <site name="wrist_site" pos="0.047631 -0.1845 0" size="0.005"/>
+
             <!-- Joint 4: wrist_flex (腕部俯仰), -90-90° -->
             <body name="link4" pos="0.047631 -0.1845 0"
                   quat="0.707105 -0.707108 0 0">

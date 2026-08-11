@@ -37,6 +37,8 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
+from remote_semantics import parse_remote_event
+
 # ── 常量: 与固件参数对齐 ──────────────────────────────────────────────
 NUM_JOINTS = 6
 JOINT_NAMES_SIM = ["J1_base", "J2_shoulder", "J3_elbow", "J4_wrist_flex",
@@ -200,8 +202,6 @@ class MuJoCoArm:
         # (2) 锁外: EMA + 目标速度
         phys_dt = self.model.opt.timestep
         n_substeps = max(1, int(dt / phys_dt))
-        target_vel = [0.0] * NUM_JOINTS
-
         if remote_active:
             # EMA 滤波
             alpha = 0.4
@@ -212,33 +212,16 @@ class MuJoCoArm:
                 for i in range(6):
                     self._ema_vals[i] = (alpha * raw[i] +
                                          (1 - alpha) * self._ema_vals[i])
-            # remote_event 参数 (柱坐标系, 原点=底座中心, Z=垂直地面):
-            #   v_theta, v_radius: 左摇杆 → 极角 / 极半径
-            #   ryaw, rpitch:      右摇杆 → 末端姿态
-            #   vz_down, vz_up:    L2/R2 → Z 高度
-            v_theta, v_radius, ryaw, rpitch, vz_down, vz_up = self._ema_vals
-            # 死区
+            # 摇杆残余死区 (视觉遥操在 PC 端已做死区)
             for i, val in enumerate(self._ema_vals):
                 if abs(val) < 0.03:
                     self._ema_vals[i] = 0.0
-            v_theta, v_radius, ryaw, rpitch, vz_down, vz_up = self._ema_vals
-            if self.use_ik:
-                # 缩放: 柱坐标 (r,θ) → Cartesian 在子步进内转换
-                _vz = (vz_up - vz_down) * REMOTE_LIN_GAIN
-                _v_theta = v_theta * REMOTE_ANG_GAIN    # dθ/dt (rad/s)
-                _v_radius = v_radius * REMOTE_LIN_GAIN   # dr/dt (m/s)
-                _wx = rpitch * REMOTE_ANG_GAIN
-                _wz = ryaw * REMOTE_ANG_GAIN
-                v_ang = np.array([_wx, 0.0, _wz])
-            else:
-                target_vel = [
-                    v_theta * REMOTE_GAIN_RAD,
-                    v_radius * REMOTE_GAIN_RAD,
-                    (vz_up - vz_down) * REMOTE_GAIN_RAD,
-                    rpitch * REMOTE_GAIN_RAD,
-                    0.0,
-                    ryaw * REMOTE_GAIN_RAD,
-                ]
+            # 固件语义 (robot_cmd.c): vx/vy/vz 基座系线速度, p3→J5, p2→J6
+            v_lin, j5_coef, j6_coef = parse_remote_event(self._ema_vals)
+            v_lin = v_lin * REMOTE_LIN_GAIN           # 系数 → m/s
+            j5_vel = j5_coef * REMOTE_GAIN_RAD        # J5 关节速度 rad/s
+            j6_vel = j6_coef * REMOTE_GAIN_RAD        # J6 关节速度 rad/s
+            v_ang = np.zeros(3)                       # 固件固定末端方向
         else:
             self._ema_initialized = False
 
@@ -254,53 +237,35 @@ class MuJoCoArm:
             if freeze:
                 self.data.ctrl[:NUM_JOINTS] = 0.0
             elif remote_active and self.use_ik:
-                # 每子步: 柱坐标→笛卡尔 转换 + 重算 Jacobian
-                ee = self.data.site_xpos[self._ee_site_id]
-                r = math.sqrt(ee[0]**2 + ee[1]**2)
-                theta = math.atan2(ee[1], ee[0])
-                # 柱坐标 → 世界 Cartesian 线速度
-                _vx = (_v_radius * math.cos(theta)
-                       - r * _v_theta * math.sin(theta))
-                _vy = (_v_radius * math.sin(theta)
-                       + r * _v_theta * math.cos(theta))
-                v_lin = np.array([_vx, _vy, _vz])
-
+                # 位置 IK (与固件 robot_pid_remote 一致, 末端方向固定), J5/J6 直接关节速度
                 mujoco.mj_jacSite(self.model, self.data,
                                   jac_pos, jac_rot, self._ee_site_id)
-                has_lin = np.any(np.abs(v_lin) > 1e-6)
-                has_ang = np.any(np.abs(v_ang) > 1e-6)
-
-                if has_lin and not has_ang:
+                if np.any(np.abs(v_lin) > 1e-6):
                     Jp = jac_pos[:, :NUM_JOINTS]
                     JJT = Jp @ Jp.T + lam * lam * np.eye(3)
                     dq = Jp.T @ np.linalg.solve(JJT, v_lin)
-                elif has_ang and not has_lin:
-                    Jr = jac_rot[:, :NUM_JOINTS]
-                    JJT = Jr @ Jr.T + lam * lam * np.eye(3)
-                    dq = Jr.T @ np.linalg.solve(JJT, v_ang)
                 else:
-                    J = np.vstack([jac_pos[:, :NUM_JOINTS],
-                                   jac_rot[:, :NUM_JOINTS]])
-                    v_full = np.concatenate([v_lin, v_ang])
-                    JJT = J @ J.T + lam * lam * np.eye(6)
-                    dq = J.T @ np.linalg.solve(JJT, v_full)
-
+                    dq = np.zeros(NUM_JOINTS)
+                dq[4] = j5_vel
+                dq[5] = j6_vel
                 for i in range(NUM_JOINTS):
-                    torque = (-PID_KV[i] * (qvel[i] - dq[i])
-                              + gravity[i])
-                    self.data.ctrl[i] = torque
+                    self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - dq[i])
+                                         + gravity[i])
             elif remote_active:
+                # 非 IK 路径: 同参数语义 (vx/vy/vz→J1-J3 关节速度近似)
+                target_vel = [v_lin[0] * REMOTE_GAIN_RAD,
+                              v_lin[1] * REMOTE_GAIN_RAD,
+                              v_lin[2] * REMOTE_GAIN_RAD,
+                              0.0, j5_vel, j6_vel]
                 for i in range(NUM_JOINTS):
-                    torque = (-PID_KV[i] * (qvel[i] - target_vel[i])
-                              + gravity[i])
-                    self.data.ctrl[i] = torque
+                    self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - target_vel[i])
+                                         + gravity[i])
             else:
                 for i in range(NUM_JOINTS):
                     pos_err = ctrl_targets[i] - qpos[i]
-                    torque = (PID_KP[i] * pos_err
-                              - PID_KV[i] * qvel[i]
-                              + gravity[i])
-                    self.data.ctrl[i] = torque
+                    self.data.ctrl[i] = (PID_KP[i] * pos_err
+                                         - PID_KV[i] * qvel[i]
+                                         + gravity[i])
 
             mujoco.mj_step(self.model, self.data)
 
@@ -778,8 +743,7 @@ def main() -> None:
     arm = MuJoCoArm(str(scene_path), use_ik=args.ik)
     if args.ik:
         log("Jacobian IK 笛卡尔控制已启用")
-        log("柱坐标系: 原点=底座中心, Z=垂直地面")
-        log("左摇杆左右=极角θ  左摇杆上下=极半径r  右摇杆=末端姿态  L2/R2=Z升降")
+        log("remote_event 语义: vx/vy/vz 基座系线速度 (与固件 robot_cmd.c 一致)")
 
     # ── 启动后台线程 ──
     connected = threading.Event()

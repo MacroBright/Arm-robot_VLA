@@ -25,6 +25,7 @@ def parse_remote_event(vals: Sequence[float]) -> Tuple[np.ndarray, float, float,
     与固件 robot_cmd.c 一致的前 6 参 (vx=-p0, vy=p1, vz=(p4-p5)/2, rx=-p3→J5, ry=p2→J6);
     **p6 → J4 (仿真扩展通道, 固件 sscanf 只读 6 参会忽略 p6, 向后兼容)**。
     """
+    vals = list(vals) + [0.0] * (7 - len(vals))
     p0, p1, p2, p3, p4, p5, p6 = (float(v) for v in vals[:7])
     v_lin = np.array([-p0, p1, (p4 - p5) / 2.0])
     j4_coef = p6

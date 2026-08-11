@@ -91,6 +91,13 @@ def main():
     results.append(check("J5(rx)正转", a1[4] - a0[4] > 1.0,
                          f"ΔJ5={a1[4]-a0[4]:.1f}°"))
 
+    # 4b) J4: p6=+1 → j4=+1 → J4 角度增大 (仿真扩展通道)
+    a0, _ = get_state(sock)
+    drive(sock, [0, 0, 0, 0, 0, 0, 1])
+    a1, _ = get_state(sock)
+    results.append(check("J4(p6)正转", a1[3] - a0[3] > 1.0,
+                         f"ΔJ4={a1[3]-a0[3]:.1f}°"))
+
     # 5) J6: p2=+1 → ry=+1 → J6 角度增大
     #    (J6 关节阻尼 2.0 > KV=0.3, 速度伺服偏弱, 0.25s 仅积累 ~0.9°; 加长驱动时间)
     a0, _ = get_state(sock)
@@ -102,7 +109,7 @@ def main():
     sock.close()
     proc.terminate()
     proc.wait(timeout=5)
-    print("ALL PASS" if all(results) else f"{sum(results)}/5 PASS")
+    print("ALL PASS" if all(results) else f"{sum(results)}/6 PASS")
     sys.exit(0 if all(results) else 1)
 
 

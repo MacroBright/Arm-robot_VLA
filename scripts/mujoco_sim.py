@@ -117,11 +117,16 @@ class MuJoCoArm:
         self._remote_vals = [0.0] * 7
         self._remote_stamp = 0.0
 
+        # end_event 状态 (末端 6DOF: 线速度 + 角速度 → 全 6×6 DLS IK)
+        self._end_vals = [0.0] * 6
+        self._end_stamp = 0.0
+
         # 线程安全状态缓存 (物理线程写, TCP 线程读)
         self._cached_qpos = list(INIT_POSE_RAD)
         self._cached_qvel = [0.0] * NUM_JOINTS
         self._cached_loads = [0.0] * NUM_JOINTS
         self._cached_ee_pos = [0.0, 0.0, 0.0]
+        self._cached_ee_quat = np.array([1.0, 0.0, 0.0, 0.0])  # wxyz
         self._cached_wrist_pos = [0.0, 0.0, 0.0]
         self._cached_target_pos = [0.0, 0.0, 0.0]
 
@@ -147,6 +152,9 @@ class MuJoCoArm:
         self._randomize_target()
         # 缓存初始末端+目标位置 (mj_forward 已在 _move_target 中调用)
         self._cached_ee_pos[:] = self.data.site_xpos[self._ee_site_id]
+        _init_q = np.zeros(4)
+        mujoco.mju_mat2Quat(_init_q, self.data.site_xmat[self._ee_site_id])
+        self._cached_ee_quat = _init_q.copy()   # wxyz
         self._cached_wrist_pos[:] = self.data.site_xpos[self._wrist_site_id]
         self._cached_target_pos[:] = self.data.xpos[self._target_body_id]
 
@@ -185,15 +193,21 @@ class MuJoCoArm:
     def step(self, dt: float) -> None:
         """子步进 + Python PID 力矩控制: 电机 actuator 仅做力矩执行。"""
 
-        # (1) 锁内读取 remote 状态
+        # (1) 锁内读取 remote / end 状态
         with self._lock:
             remote_active = (
                 self.remote_enabled
                 and time.monotonic() - self._remote_stamp < REMOTE_TIMEOUT_S
                 and any(abs(v) > 1e-3 for v in self._remote_vals)
             )
+            end_active = (
+                self.remote_enabled
+                and time.monotonic() - self._end_stamp < REMOTE_TIMEOUT_S
+                and any(abs(v) > 1e-3 for v in self._end_vals)
+            )
             freeze = self._freeze_ctrl
             raw = list(self._remote_vals) if remote_active else [0.0] * 7
+            end_raw = list(self._end_vals) if end_active else [0.0] * 6
             self._ema_initialized = self._ema_initialized and remote_active
             # remote 下降沿: 松手时锁定当前位置 (不下坠)
             if self._was_remote_active and not remote_active:
@@ -241,6 +255,23 @@ class MuJoCoArm:
 
             if freeze:
                 self.data.ctrl[:NUM_JOINTS] = 0.0
+            elif end_active and self.use_ik:
+                # 末端 6DOF: 线速度 + 角速度 → 全 6×6 DLS Jacobian
+                v_lin_e = np.array(end_raw[:3]) * REMOTE_LIN_GAIN     # m/s
+                w_ang_e = np.array(end_raw[3:6]) * REMOTE_ANG_GAIN    # rad/s
+                mujoco.mj_jacSite(self.model, self.data,
+                                  jac_pos, jac_rot, self._ee_site_id)
+                J = np.vstack([jac_pos[:, :NUM_JOINTS],
+                               jac_rot[:, :NUM_JOINTS]])   # 6×6 全雅可比
+                v_full = np.concatenate([v_lin_e, w_ang_e])
+                if np.any(np.abs(v_full) > 1e-6):
+                    JJT = J @ J.T + lam * lam * np.eye(6)
+                    dq = J.T @ np.linalg.solve(JJT, v_full)
+                else:
+                    dq = np.zeros(NUM_JOINTS)
+                for i in range(NUM_JOINTS):
+                    self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - dq[i])
+                                         + gravity[i])
             elif remote_active and self.use_ik:
                 # 位置 IK: J1-J3 驱动末端位置, J4/J5/J6 姿态通道直接关节速度
                 mujoco.mj_jacSite(self.model, self.data,
@@ -282,6 +313,9 @@ class MuJoCoArm:
             self._cached_qvel = self.data.qvel[:NUM_JOINTS].copy()
             self._cached_loads = self.data.qfrc_actuator[:NUM_JOINTS].copy()
             self._cached_ee_pos = self.data.site_xpos[self._ee_site_id].copy()
+            _q = np.zeros(4)
+            mujoco.mju_mat2Quat(_q, self.data.site_xmat[self._ee_site_id])
+            self._cached_ee_quat = _q.copy()   # wxyz
             self._cached_wrist_pos = self.data.site_xpos[self._wrist_site_id].copy()
             self._cached_target_pos = self.data.xpos[self._target_body_id].copy()
 
@@ -323,6 +357,8 @@ class MuJoCoArm:
             return self._cmd_remote_disable()
         if cmd == "remote_event":
             return self._cmd_remote_event(parts[1:])
+        if cmd == "end_event":
+            return self._cmd_end_event(parts[1:])
         if cmd == "rel_rotate":
             return self._cmd_rel_rotate(parts[1:])
         if cmd == "soft_reset":
@@ -337,6 +373,8 @@ class MuJoCoArm:
             return self._cmd_get_mode()
         if cmd == "get_ee":
             return self._cmd_get_ee()
+        if cmd == "get_ee_pose":
+            return self._cmd_get_ee_pose()
         if cmd == "get_wrist":
             return self._cmd_get_wrist()
         if cmd == "target_pos":
@@ -385,6 +423,8 @@ class MuJoCoArm:
             self.data.qvel[:NUM_JOINTS] = 0.0
             self.remote_enabled = False
             self._remote_vals = [0.0] * 7
+            self._end_vals = [0.0] * 6
+            self._end_stamp = 0.0
         log("!! e_stop → 全部关节停止, 退出远程模式")
         return ["ESTOP"]
 
@@ -401,6 +441,8 @@ class MuJoCoArm:
         with self._lock:
             self.remote_enabled = False
             self._remote_vals = [0.0] * 7
+            self._end_vals = [0.0] * 6
+            self._end_stamp = 0.0
             self._was_remote_active = False
             self._target_pos[:] = INIT_POSE_RAD
         log("remote_disable → 远程模式关闭 (soft_reset)")
@@ -442,6 +484,26 @@ class MuJoCoArm:
             log("remote_event 归零 (摇杆回中)")
         return []
 
+    def _cmd_end_event(self, args: list[str]) -> list[str]:
+        """末端 6DOF 速度命令 (独立于 remote_event 语义)。
+
+        6 通道: [vx, vy, vz, wx, wy, wz] 基座系线速度(m/s系数) + 角速度(rad/s系数).
+        use_ik 时走全 6×6 DLS Jacobian (含姿态), 不驱动 remote_event 的 J4/J5/J6 直驱.
+        """
+        try:
+            vals = [float(v) for v in args[:6]]
+        except ValueError:
+            log(f"!! end_event 参数无法解析: {args}")
+            return []
+        while len(vals) < 6:
+            vals.append(0.0)
+        with self._lock:
+            if self.remote_enabled:
+                self._end_vals = vals
+                self._end_stamp = time.monotonic()
+                self.control_mode = "cartesian"
+        return []
+
     def _cmd_rel_rotate(self, args: list[str]) -> list[str]:
         try:
             joint = int(args[0]) - 1   # 1-based → 0-based
@@ -472,6 +534,8 @@ class MuJoCoArm:
             self._freeze_ctrl = False
             self._remote_vals = [0.0] * 7      # 清空 remote 命令, 立即退出 remote 窗口
             self._remote_stamp = 0.0           # 阻止"松手锁位"覆盖 INIT 目标
+            self._end_vals = [0.0] * 6         # 清空 end_event, 避免残留驱动
+            self._end_stamp = 0.0
             self._was_remote_active = False
             self.control_mode = "joint"
         log("soft_reset → 回预设初始角度")
@@ -534,6 +598,14 @@ class MuJoCoArm:
         with self._lock:
             wp = list(self._cached_wrist_pos)
         return [f"WRIST:{wp[0]:.4f},{wp[1]:.4f},{wp[2]:.4f}"]
+
+    def _cmd_get_ee_pose(self) -> list[str]:
+        """返回末端世界位姿 (位置 + 四元数 wxyz). 末端 6DOF 遥操反馈用."""
+        with self._lock:
+            ep = list(self._cached_ee_pos)
+            q = list(self._cached_ee_quat)
+        return [f"EEPOSE:{ep[0]:.4f},{ep[1]:.4f},{ep[2]:.4f},"
+                f"{q[0]:.4f},{q[1]:.4f},{q[2]:.4f},{q[3]:.4f}"]   # xyz + wxyz
 
     def _cmd_target_pos(self) -> list[str]:
         """返回目标小球当前位置。"""

@@ -56,8 +56,8 @@ REMOTE_LIN_GAIN = 0.15            # Cartesian 线速度 (m/s per unit)
 REMOTE_ANG_GAIN = 1.5             # Cartesian 角速度 (rad/s per unit)
 IK_DAMPING = 0.05                 # 阻尼伪逆 λ (防奇异)
 # Python 端 PID: 每关节 kp/kv
-PID_KP = [10.0, 50.0, 30.0, 15.0, 8.0, 3.0]
-PID_KV = [1.0, 3.0, 2.0, 3.0, 3.0, 3.0]
+PID_KP = [10.0, 50.0, 30.0, 50.0, 20.0, 3.0]
+PID_KV = [1.0, 3.0, 2.0, 10.0, 3.0, 3.0]
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -470,7 +470,9 @@ class MuJoCoArm:
         with self._lock:
             self._target_pos[:] = INIT_POSE_RAD
             self._freeze_ctrl = False
-            self._was_remote_active = False   # 关键: 阻止"松手锁位"覆盖 INIT 目标
+            self._remote_vals = [0.0] * 7      # 清空 remote 命令, 立即退出 remote 窗口
+            self._remote_stamp = 0.0           # 阻止"松手锁位"覆盖 INIT 目标
+            self._was_remote_active = False
             self.control_mode = "joint"
         log("soft_reset → 回预设初始角度")
         return []

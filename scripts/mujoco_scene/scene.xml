@@ -104,7 +104,7 @@
                   quat="0.707105 -0.707108 0 0">
               <joint name="joint4" type="hinge" class="motor"
                      axis="0 0 1" range="-3.1416 3.1416"
-                     damping="2.0"/>
+                     damping="15.0"/>
               <inertial pos="-2.816e-05 -0.006828 0.029946" quat="1 0 0 0"
                         mass="0.178466"
                         diaginertia="0.00010542 0.00011129 4.42311e-05"/>

@@ -583,7 +583,7 @@ class MuJoCoArm:
             mode = self.control_mode
             joint = self.active_joint
         jn = JOINT_NAMES_SIM[joint] if 0 <= joint < len(JOINT_NAMES_SIM) else "?"
-        return [f"MODE:{mode},{joint},{joint_name}"]
+        return [f"MODE:{mode},{joint},{jn}"]
 
     def _cmd_get_ee(self) -> list[str]:
         """返回末端世界坐标 + 目标球位置 (训练数据采集用)。"""

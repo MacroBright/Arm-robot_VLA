@@ -43,8 +43,8 @@ from remote_semantics import parse_remote_event
 NUM_JOINTS = 6
 JOINT_NAMES_SIM = ["J1_base", "J2_shoulder", "J3_elbow", "J4_wrist_flex",
                    "J5_wrist_roll", "J6_gripper"]
-# 初始姿态: 各关节中位值 (J2:45 J3:67 J4:-157 J5:0 J6:5)
-INIT_POSE_DEG = [90.0, 45.0, 67.0, -157.0, 0.0, 5.0]
+# 初始姿态: 各关节中位值 (J2:45 J3:90 J4:90 J5:0 J6:0)
+INIT_POSE_DEG = [90.0, 45.0, 90.0, 90.0, 0.0, 0.0]
 INIT_POSE_RAD = [math.radians(a) for a in INIT_POSE_DEG]
 
 STEP_HZ = 50                      # 物理步进频率
@@ -57,7 +57,7 @@ REMOTE_ANG_GAIN = 1.5             # Cartesian 角速度 (rad/s per unit)
 IK_DAMPING = 0.05                 # 阻尼伪逆 λ (防奇异)
 # Python 端 PID: 每关节 kp/kv
 PID_KP = [10.0, 50.0, 30.0, 15.0, 8.0, 3.0]
-PID_KV = [1.0, 3.0, 2.0, 10.0, 3.0, 3.0]
+PID_KV = [1.0, 3.0, 2.0, 3.0, 3.0, 3.0]
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480

@@ -53,11 +53,11 @@ REMOTE_GAIN_DEG = 30.0            # remote_event → 关节速度 (无IK模式)
 REMOTE_GAIN_RAD = math.radians(REMOTE_GAIN_DEG)
 # Jacobian IK 参数
 REMOTE_LIN_GAIN = 0.15            # Cartesian 线速度 (m/s per unit)
-REMOTE_ANG_GAIN = 1.5             # Cartesian 角速度 (rad/s per unit)
+REMOTE_ANG_GAIN = 2.5             # Cartesian 角速度 (rad/s per unit) (S1: 1.5→2.5 腕部跟手)
 IK_DAMPING = 0.05                 # 阻尼伪逆 λ (防奇异)
 # Python 端 PID: 每关节 kp/kv
 PID_KP = [10.0, 50.0, 30.0, 50.0, 20.0, 3.0]
-PID_KV = [1.0, 3.0, 2.0, 10.0, 3.0, 3.0]
+PID_KV = [1.0, 3.0, 2.0, 20.0, 6.0, 6.0]   # S1: J4 10→20, J5/J6 3→6 (腕部速度跟踪) (2026-08-12)
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480

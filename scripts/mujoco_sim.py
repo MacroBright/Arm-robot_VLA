@@ -57,7 +57,7 @@ REMOTE_ANG_GAIN = 2.5             # Cartesian 角速度 (rad/s per unit) (S1: 1.
 IK_DAMPING = 0.05                 # 阻尼伪逆 λ (防奇异)
 # Python 端 PID: 每关节 kp/kv
 PID_KP = [10.0, 50.0, 30.0, 50.0, 20.0, 3.0]
-PID_KV = [1.0, 3.0, 2.0, 20.0, 6.0, 6.0]   # S1: J4 10→20, J5/J6 3→6 (腕部速度跟踪) (2026-08-12)
+PID_KV = [3.0, 6.0, 4.0, 20.0, 6.0, 1.0]   # J1/J2/J3 提速(位置跟手), J6 压低(仿真不稳) (2026-08-12)
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -256,19 +256,24 @@ class MuJoCoArm:
             if freeze:
                 self.data.ctrl[:NUM_JOINTS] = 0.0
             elif end_active and self.use_ik:
-                # 末端 6DOF: 线速度 + 角速度 → 全 6×6 DLS Jacobian
+                # 解耦 IK: 位置用腕心(J1-J3), 姿态用末端旋转(J4/J5), J6 剥离
                 v_lin_e = np.array(end_raw[:3]) * REMOTE_LIN_GAIN     # m/s
                 w_ang_e = np.array(end_raw[3:6]) * REMOTE_ANG_GAIN    # rad/s
-                mujoco.mj_jacSite(self.model, self.data,
-                                  jac_pos, jac_rot, self._ee_site_id)
-                J = np.vstack([jac_pos[:, :NUM_JOINTS],
-                               jac_rot[:, :NUM_JOINTS]])   # 6×6 全雅可比
-                v_full = np.concatenate([v_lin_e, w_ang_e])
-                if np.any(np.abs(v_full) > 1e-6):
-                    JJT = J @ J.T + lam * lam * np.eye(6)
-                    dq = J.T @ np.linalg.solve(JJT, v_full)
-                else:
-                    dq = np.zeros(NUM_JOINTS)
+                dq = np.zeros(NUM_JOINTS)
+                if np.any(np.abs(v_lin_e) > 1e-6):
+                    # 位置: 腕心 Jacobian (腕部旋转不移动腕心 → 位置/姿态解耦)
+                    mujoco.mj_jacSite(self.model, self.data,
+                                      jac_pos, jac_rot, self._wrist_site_id)
+                    Jp = jac_pos[:, :3]          # J1-J3 驱动腕心位置
+                    JJT = Jp @ Jp.T + lam * lam * np.eye(3)
+                    dq[:3] = Jp.T @ np.linalg.solve(JJT, v_lin_e)
+                if np.any(np.abs(w_ang_e) > 1e-6):
+                    # 姿态: 末端旋转 Jacobian (J4/J5 驱动末端姿态)
+                    mujoco.mj_jacSite(self.model, self.data,
+                                      jac_pos, jac_rot, self._ee_site_id)
+                    Jr = jac_rot[:, 3:5]         # J4/J5
+                    JJT = Jr @ Jr.T + lam * lam * np.eye(3)
+                    dq[3:5] = Jr.T @ np.linalg.solve(JJT, w_ang_e)
                 for i in range(NUM_JOINTS):
                     self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - dq[i])
                                          + gravity[i])

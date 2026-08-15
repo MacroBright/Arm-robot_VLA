@@ -27,6 +27,7 @@ POS_SCALE: float = 10.0   # 位置 ×10
 VEL_SCALE: float = 10.0   # 速度 RPM×10
 
 # 关节限位表 (度) — 真机扫掠后修正 (spec §2.2)
+# TODO(bring-up): J2 INIT=45° 与 LIMITS 下界 90° 矛盾, Task 8 真机扫掠后修正
 DEFAULT_LIMITS: list[tuple[float, float]] = [
     (0.0, 360.0),    # J1 shoulder_pan
     (90.0, 180.0),   # J2 shoulder_lift
@@ -37,6 +38,7 @@ DEFAULT_LIMITS: list[tuple[float, float]] = [
 ]
 
 # 软复位初始位 (与固件 soft_reset 一致)
+# TODO(bring-up): J2 INIT=45° 与 LIMITS 下界 90° 矛盾, Task 8 真机扫掠后修正
 INIT_POSE_DEG: list[float] = [90.0, 45.0, 90.0, 90.0, 0.0, 0.0]
 
 

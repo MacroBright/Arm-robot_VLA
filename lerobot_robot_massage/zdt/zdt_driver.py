@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Callable, Optional
 
-from .can_transport import CanTransport
+from .can_transport import CanTransport, CanTransportError
 from .config import CHECKSUM, F_ENABLE, F_POS, F_READ_CUR, F_READ_POS, F_STOP, F_VEL
 from .frames import (
     add_checksum, decode_pos3, encode_frame, encode_pos3, encode_vel2,
@@ -29,6 +29,19 @@ class TimeoutError(ZdtDriverError):
 
 class ChecksumError(ZdtDriverError):
     """回帧校验失败."""
+
+
+class TransportError(ZdtDriverError):
+    """传输层异常 (CanTransportError 的驱动层投影).
+
+    保证控制器只依赖 ZdtDriverError 一个异常边界 — 总线死时 send/recv
+    抛出的 CanTransportError 在此被包成 ZdtDriverError 子类, 上层
+    except ZdtDriverError 即可兜住.
+    """
+
+
+class CommunicationError(ZdtDriverError):
+    """CAN 通信整体失败 (一个角度都没读到) — 调用方应 loud fail."""
 
 
 class ZdtDriver:
@@ -119,7 +132,11 @@ class ZdtDriver:
         frames = encode_frame(addr, payload)
         for attempt in range(self.retries + 1):
             for f in frames:
-                self._t.send(f)
+                try:
+                    self._t.send(f)
+                except CanTransportError as exc:
+                    raise TransportError(
+                        f"send 失败 addr={addr:#04x} func={payload[0]:#04x}") from exc
             if not expect_response:
                 return None
             resp = self._recv_for(addr, payload[0])
@@ -133,7 +150,11 @@ class ZdtDriver:
         """在 deadline 内收帧, 找到 (addr,func) 匹配回帧则返回, 否则 None."""
         deadline = time.monotonic() + self.timeout_s
         while time.monotonic() < deadline:
-            frame = self._t.recv(self.timeout_s)
+            try:
+                frame = self._t.recv(self.timeout_s)
+            except CanTransportError as exc:
+                raise TransportError(
+                    f"recv 失败 addr={addr:#04x} func={func:#04x}") from exc
             if frame is None:
                 continue
             r_addr, _seq, data = parse_frame(frame)

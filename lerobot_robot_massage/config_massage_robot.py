@@ -4,6 +4,7 @@ Registered with LeRobot's configuration system via @RobotConfig.register_subclas
 """
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
@@ -34,7 +35,7 @@ class MassageRobotConfig(RobotConfig):
     port: str = "COM3"
     baudrate: int = 115200
 
-    transport: str = "serial"       # "serial" | "can"
+    transport: Literal["serial", "can"] = "serial"  # "serial" | "can"
     channel: str = "can0"           # transport=="can" 时用
     can_bitrate: int = 500_000
 

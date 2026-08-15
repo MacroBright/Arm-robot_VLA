@@ -26,6 +26,17 @@ def test_config_can_fields():
     assert c.transport == "can" and c.channel == "can1"
 
 
+def test_can_transport_selects_zdt_controller():
+    # transport="can" → _protocol 必须是 ZdtController (空 cameras 避免硬件依赖)
+    if not _HAS:
+        return
+    from lerobot_robot_massage.massage_robot import MassageRobot
+    from lerobot_robot_massage.zdt.controller import ZdtController
+    cfg = MassageRobotConfig(transport="can", cameras={})
+    robot = MassageRobot(cfg)
+    assert isinstance(robot._protocol, ZdtController)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

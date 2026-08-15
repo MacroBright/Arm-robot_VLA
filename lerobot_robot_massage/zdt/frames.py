@@ -1,5 +1,6 @@
 """ZDT 帧编解码 — 纯函数, 无硬件/无 python-can 依赖 (spec §2.1)."""
 from dataclasses import dataclass
+from typing import Optional
 
 from .config import CHECKSUM, POS_SCALE, VEL_SCALE
 
@@ -62,9 +63,16 @@ def encode_pos3(pos_deg: float) -> bytes:
     return bytes([sign | (mag >> 16) & 0xFF, (mag >> 8) & 0xFF, mag & 0xFF])
 
 
-def decode_pos3(data3: bytes, sign: int = 1) -> float:
-    """3 字节位置(×10) + 符号字节 → 度."""
+def decode_pos3(data3: bytes, sign: Optional[int] = None) -> float:
+    """3 字节位置(×10) + 符号 → 度.
+
+    sign=None 时从 data3[0] 最高位推导符号 (与 encode_pos3 的
+    符号-幅值约定一致); 调用方传显式 sign (如 driver read_pos 从回帧
+    符号字节传) 时保持显式符号. 保证同一约定下负数 round-trip 互逆.
+    """
     v = ((data3[0] & 0x7F) << 16) | (data3[1] << 8) | data3[2]
+    if sign is None:
+        sign = -1 if data3[0] & 0x80 else 1
     return v / POS_SCALE * sign
 
 

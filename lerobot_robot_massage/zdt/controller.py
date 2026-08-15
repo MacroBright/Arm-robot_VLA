@@ -9,7 +9,9 @@ from typing import Optional
 
 from .can_transport import CanTransport
 from .config import INIT_POSE_DEG, ZdtConfig
-from .zdt_driver import ZdtDriver, ZdtDriverError
+from .zdt_driver import (
+    CommunicationError, ZdtDriver, ZdtDriverError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +36,36 @@ class ZdtController:
             from .can_transport import SocketCanTransport
             self._transport = SocketCanTransport(self.config.channel,
                                                  self.config.bitrate)
-        self._transport.open()
-        self._driver = ZdtDriver(self._transport, timeout_s=self.config.timeout_s,
-                                 retries=self.config.retries)
-        self.set_torque(True)
-        for addr in self.config.joint_addrs:
-            self._driver.read_pos(addr)      # 逐轴验证; 超时抛错 → 连接失败
+        try:
+            self._transport.open()
+            self._driver = ZdtDriver(self._transport, timeout_s=self.config.timeout_s,
+                                     retries=self.config.retries)
+            self.set_torque(True)
+            for addr in self.config.joint_addrs:
+                self._driver.read_pos(addr)      # 逐轴验证; 超时抛错 → 连接失败
+        except Exception:
+            # 失败清理: 已使能的轴先急停 (best-effort), 再关总线; _connected 保持 False
+            self._connected = False
+            if self._driver is not None:
+                try:
+                    self.e_stop()
+                except ZdtDriverError:
+                    logger.warning("connect 失败后 e_stop 发送失败", exc_info=True)
+            try:
+                self._transport.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("connect 失败后 transport close 失败", exc_info=True)
+            raise
         self._connected = True
         self._last_io_s = time.monotonic()
         logger.info("ZDT CAN connected: %s (6 drives verified)", self.config.channel)
 
     def disconnect(self) -> None:
         if self._transport is not None:
-            self._transport.close()
+            try:
+                self._transport.close()
+            except Exception:  # noqa: BLE001 — 关总线失败不应遮蔽主流程
+                logger.warning("transport close 失败", exc_info=True)
         self._connected = False
 
     @property
@@ -56,7 +75,14 @@ class ZdtController:
     # ── SerialProtocol 兼容接口 ──────────────────────────
 
     def get_state(self) -> tuple[list[float], list[float], list[float]]:
-        """角度°/速度(占位0)/电流mA. 读失败返回空列表 (调用方降级)."""
+        """角度°/速度(占位0)/电流mA.
+
+        任一读失败:
+          - 一个角度都没读到 (总失败) → 抛 CommunicationError (loud fail,
+            避免把全 0 观测静默录进 LeRobot 数据集);
+          - 部分读到 → logger.warning 并返回 ([], [], []) (坏数据但下一轮会
+            loud fail, 调用方按空列表降级).
+        """
         angles: list[float] = []
         loads: list[float] = []
         try:
@@ -64,7 +90,11 @@ class ZdtController:
                 angles.append(self._driver.read_pos(addr))
             for addr in self.config.joint_addrs:
                 loads.append(self._driver.read_current(addr))
-        except ZdtDriverError:
+        except ZdtDriverError as exc:
+            if not angles:
+                raise CommunicationError("total CAN read failure") from exc
+            logger.warning("partial CAN read failure (got %d/6 angles); returning empty",
+                           len(angles), exc_info=True)
             return [], [], []
         self._last_io_s = time.monotonic()
         return angles, [0.0] * len(angles), loads
@@ -96,7 +126,9 @@ class ZdtController:
     # ── ZDT 扩展 ─────────────────────────────────────────
 
     def rel_rotate(self, joint_id: int, delta_deg: float) -> None:
-        """关节相对旋转. joint_id: 1-based (1=关节1)."""
+        """关节相对旋转. joint_id: 1-based (1=关节1), 合法范围 1-6."""
+        if not 1 <= joint_id <= 6:
+            raise ValueError(f"joint_id 需 1-6, got {joint_id}")
         addr = self.config.joint_addrs[joint_id - 1]
         self._driver.move_rel(addr, delta_deg, self.config.speed_rpm)
         self._last_io_s = time.monotonic()
@@ -118,4 +150,5 @@ class ZdtController:
             try:
                 self.e_stop()
             except ZdtDriverError:
-                pass
+                # TransportError 是 ZdtDriverError 子类 → 总线死时也被捕住, 留痕
+                logger.exception("watchdog e_stop 发送失败")

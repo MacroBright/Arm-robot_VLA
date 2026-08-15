@@ -3,10 +3,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from lerobot_robot_massage.zdt.can_transport import CanTransportError
 from lerobot_robot_massage.zdt.config import CHECKSUM, F_ENABLE, F_POS, F_READ_POS, F_STOP
-from lerobot_robot_massage.zdt.fakes import FakeTransport
+from lerobot_robot_massage.zdt.fakes import (
+    FailingRecvTransport, FailingSendTransport, FakeTransport,
+)
 from lerobot_robot_massage.zdt.testutil import run_all
-from lerobot_robot_massage.zdt.zdt_driver import ZdtDriver, TimeoutError
+from lerobot_robot_massage.zdt.zdt_driver import (
+    TransportError, ZdtDriver, TimeoutError,
+)
 
 
 def _last_frame(transport: FakeTransport):
@@ -98,6 +103,44 @@ def test_set_zero_and_home_payload():
     assert _last_frame(t).data == bytes([0x93, 0x88, 0x01, CHECKSUM])
     d.home(0x02)
     assert _last_frame(t).data == bytes([0x9A, 0x00, 0x00, CHECKSUM])
+
+
+def test_send_transport_error_wrapped_as_transport_error():
+    # 总线 send 死 → CanTransportError 必须包成 TransportError (ZdtDriverError),
+    # 不能泄漏裸 CanTransportError/RuntimeError
+    t = FailingSendTransport()
+    d = ZdtDriver(t, timeout_s=0.001, retries=0)
+    try:
+        d.stop_all()
+        raise AssertionError("应抛 TransportError")
+    except TransportError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        raise AssertionError(f"泄漏非 TransportError: {type(exc).__name__}: {exc}")
+
+
+def test_recv_transport_error_wrapped_as_transport_error():
+    # read_pos 的 recv 抛 CanTransportError → TransportError; send 已成功 (先注入请求帧)
+    t = FailingRecvTransport()
+    d = ZdtDriver(t, timeout_s=0.001, retries=0)
+    try:
+        d.read_pos(0x02)
+        raise AssertionError("应抛 TransportError")
+    except TransportError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        raise AssertionError(f"泄漏非 TransportError: {type(exc).__name__}: {exc}")
+
+
+def test_transport_error_carries_cause():
+    # __cause__ 应指向原始 CanTransportError (调试链完整)
+    t = FailingSendTransport()
+    d = ZdtDriver(t, timeout_s=0.001, retries=0)
+    try:
+        d.stop_all()
+        raise AssertionError("应抛 TransportError")
+    except TransportError as exc:
+        assert isinstance(exc.__cause__, CanTransportError)
 
 
 if __name__ == "__main__":

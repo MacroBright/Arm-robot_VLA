@@ -64,6 +64,12 @@ def test_pos_negative():
     assert abs(decode_pos3(encode_pos3(-45.0), -1) + 45.0) < 0.001
 
 
+def test_pos_negative_roundtrip_same_convention():
+    # 同一约定下 (不传 sign, 从 data3[0] 最高位推导) 负数必须互逆
+    for deg in (-360.0, -90.0, -45.0, -7.5):
+        assert abs(decode_pos3(encode_pos3(deg)) - deg) < 0.001, f"deg={deg}"
+
+
 def test_vel_roundtrip():
     assert abs(decode_vel2(encode_vel2(600.0)) - 600.0) < 0.001
 

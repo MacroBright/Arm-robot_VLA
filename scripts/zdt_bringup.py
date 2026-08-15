@@ -16,10 +16,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lerobot_robot_massage.zdt.config import INIT_POSE_DEG, ZdtConfig
 from lerobot_robot_massage.zdt.controller import ZdtController
+from lerobot_robot_massage.zdt.zdt_driver import ZdtDriverError
 
 
 def _print_state(ctrl: ZdtController) -> None:
-    angles, vels, loads = ctrl.get_state()
+    try:
+        angles, vels, loads = ctrl.get_state()
+    except ZdtDriverError as exc:
+        print(f"[status] 读取失败: {exc}")
+        return
     if not angles:
         print("[status] 读取失败 (CAN 超时?)")
         return
@@ -48,25 +53,30 @@ def main() -> None:
 
     cfg = ZdtConfig(channel=args.iface)
     ctrl = ZdtController(cfg)
-    ctrl.connect()
 
     try:
+        ctrl.connect()
         if args.cmd == "status":
             for _ in range(args.n):
                 _print_state(ctrl)
+                ctrl.tick()      # 看门狗每轮巡检
         elif args.cmd == "step":
             if not 1 <= args.joint <= 6:
                 raise SystemExit("joint 需在 1-6")
             ctrl.rel_rotate(args.joint, args.deg)
+            ctrl.tick()
             print(f"[step] J{args.joint} {args.deg:+.1f}°")
         elif args.cmd == "reset":
             ctrl.soft_reset()
+            ctrl.tick()
             print(f"[reset] soft_reset → {INIT_POSE_DEG}")
         elif args.cmd == "torque":
             ctrl.set_torque(bool(args.state))
+            ctrl.tick()
             print(f"[torque] {'使能' if args.state else '失能'}")
         elif args.cmd == "estop":
             ctrl.e_stop()
+            ctrl.tick()
             print("[estop] 已广播急停")
     finally:
         ctrl.disconnect()

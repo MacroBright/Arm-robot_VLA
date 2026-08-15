@@ -1,7 +1,7 @@
 """测试用假对象."""
 from typing import Optional
 
-from .can_transport import CanTransport
+from .can_transport import CanTransport, CanTransportError
 from .frames import CanFrame
 
 
@@ -37,3 +37,35 @@ class FakeTransport(CanTransport):
     def sent_ids(self) -> list[int]:
         """已发帧 ID 列表 (断言辅助)."""
         return [f.arbitration_id for f in self.sent]
+
+
+class FailingSendTransport(FakeTransport):
+    """send 抛 CanTransportError (模拟总线发送死亡)."""
+
+    def send(self, frame: CanFrame) -> None:
+        raise CanTransportError("simulated send bus death")
+
+
+class FailingRecvTransport(FakeTransport):
+    """recv 在注入耗尽后抛 CanTransportError (模拟总线接收死亡)."""
+
+    def recv(self, timeout_s: float) -> Optional[CanFrame]:
+        if self.responses:
+            return self.responses.pop(0)
+        raise CanTransportError("simulated recv bus death")
+
+
+class FailingRecvAfterNTransport(FakeTransport):
+    """第 n 次 recv 抛 CanTransportError, 之前的 recv 走 FakeTransport 逻辑."""
+
+    def __init__(self, fail_on_recv_n: int) -> None:
+        super().__init__()
+        self._fail_on_recv_n = fail_on_recv_n
+        self._recv_calls = 0
+
+    def recv(self, timeout_s: float) -> Optional[CanFrame]:
+        self._recv_calls += 1
+        if self._recv_calls >= self._fail_on_recv_n:
+            raise CanTransportError(
+                f"simulated recv bus death on call #{self._recv_calls}")
+        return super().recv(timeout_s)

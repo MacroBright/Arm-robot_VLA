@@ -17,6 +17,7 @@ from lerobot.robots import Robot
 
 from .config_massage_robot import MassageRobotConfig
 from .serial_protocol import SerialProtocol, SerialProtocolError
+from .zdt.zdt_driver import ZdtDriverError
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class MassageRobot(Robot):
         # Disable torque before disconnecting (safety)
         try:
             self._protocol.set_torque(False)
-        except SerialProtocolError:
+        except (SerialProtocolError, ZdtDriverError):
             pass
 
         self._protocol.disconnect()

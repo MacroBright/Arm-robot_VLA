@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.config import (
     CHECKSUM, DEFAULT_LIMITS, INIT_POSE_DEG, JOINT_ADDRS, POS_SCALE,
     VEL_SCALE, ZdtConfig, F_ENABLE, F_POS, F_READ_POS, F_READ_CUR,

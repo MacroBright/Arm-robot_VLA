@@ -55,7 +55,7 @@ touch lerobot_robot_massage/zdt/__init__.py
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.config import (
     CHECKSUM, DEFAULT_LIMITS, INIT_POSE_DEG, JOINT_ADDRS, POS_SCALE,
     VEL_SCALE, ZdtConfig, F_ENABLE, F_POS, F_READ_POS, F_READ_CUR,
@@ -212,7 +212,7 @@ git commit -m "feat(zdt): ZDT 常量与配置 (地址映射/功能码/限位表)
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.frames import (
     CanFrame, add_checksum, decode_pos3, decode_vel2, encode_frame,
     encode_pos3, encode_vel2, parse_frame, payload_chunks, verify_checksum,
@@ -269,9 +269,9 @@ def test_pos_roundtrip():
 
 
 def test_pos_negative():
-    # 负角度: 幅值编码 + decode 用 sign=-1
-    assert encode_pos3(-45.0)[0] & 0x80            # 符号位在最高位
-    assert abs(decode_pos3(encode_pos3(-45.0)[1:], -1) - 45.0) < 0.001
+    # 负角度: 符号编码进最高位, decode 用符号字节(sign=-1)还原
+    assert encode_pos3(-45.0)[0] & 0x80
+    assert abs(decode_pos3(encode_pos3(-45.0), -1) + 45.0) < 0.001
 
 
 def test_vel_roundtrip():
@@ -444,7 +444,7 @@ def run_all(module_globals: dict) -> None:
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.can_transport import CanTransport, SocketCanTransport
 from lerobot_robot_massage.zdt.fakes import FakeTransport
 from lerobot_robot_massage.zdt.frames import CanFrame
@@ -664,7 +664,7 @@ git commit -m "feat(zdt): CAN 传输抽象 + SocketCAN 惰性导入后端 + 测�
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.config import CHECKSUM, F_ENABLE, F_POS, F_READ_POS, F_STOP
 from lerobot_robot_massage.zdt.fakes import FakeTransport
 from lerobot_robot_massage.zdt.testutil import run_all
@@ -700,8 +700,8 @@ def test_move_abs_payload_split():
     assert [f.arbitration_id for f in t.sent] == [0x0500, 0x0501]
     assert t.sent[0].data[0] == F_POS
     assert t.sent[1].data[0] == F_POS
-    # 位置 90.0×10=900 → 0x000384 (data[3:6])
-    assert t.sent[0].data[3:6] == bytes([0x00, 0x03, 0x84])
+    # 位置 90.0×10=900 → 0x000384 (速度2B 之后, data[4:7])
+    assert t.sent[0].data[4:7] == bytes([0x00, 0x03, 0x84])
 
 
 def test_read_pos_parses():
@@ -714,7 +714,7 @@ def test_read_pos_parses():
 
 def test_read_current_parses():
     t = FakeTransport()
-    t.inject(0x03, 0x27, b"\x02\x00\x63\x6b")   # mA = 0x0063 = 99
+    t.inject(0x03, 0x27, b"\x00\x63\x6b")   # mA = 0x0063 = 99
     d = ZdtDriver(t, timeout_s=0.001, retries=0)
     assert abs(d.read_current(0x03) - 99.0) < 0.001
 
@@ -964,7 +964,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.config import CHECKSUM, F_READ_CUR, F_READ_POS, ZdtConfig
 from lerobot_robot_massage.zdt.controller import ZdtController
 from lerobot_robot_massage.zdt.fakes import FakeTransport
@@ -1008,8 +1008,8 @@ def test_set_joints_clamps_and_sends():
     ctrl.set_joints([720.0, 100.0, 0.0, 0.0, 45.0, 0.0])
     # 每轴 0xFB 2 帧 → 共 12 帧; 取 J1 的第 0/1 帧
     assert t.sent_ids[0] == 0x0200 and t.sent_ids[1] == 0x0201
-    # 位置 360.0×10=3600 → 0x0E10 (data[3:6])
-    assert t.sent[0].data[3:6] == bytes([0x00, 0x0E, 0x10])
+    # 位置 360.0×10=3600 → 0x0E10 (速度2B 之后, data[4:7])
+    assert t.sent[0].data[4:7] == bytes([0x00, 0x0E, 0x10])
 
 
 def test_set_torque_sends_six_enables():
@@ -1030,9 +1030,9 @@ def test_soft_reset_sends_init_pose():
     ctrl, t = _mk()
     ctrl.soft_reset()
     assert len(t.sent) == 12   # 6 轴 × 2 帧
-    # J2 (addr 0x03) 45°×10=450 → 0x01C2, 位于其第 0 帧 data[3:6]
+    # J2 (addr 0x03) 45°×10=450 → 0x01C2, 位于其第 0 帧 data[4:7]
     j2 = [f for f in t.sent if f.arbitration_id >> 8 == 0x03]
-    assert j2[0].data[3:6] == bytes([0x00, 0x01, 0xC2])
+    assert j2[0].data[4:7] == bytes([0x00, 0x01, 0xC2])
 
 
 def test_rel_rotate_one_joint():
@@ -1040,7 +1040,7 @@ def test_rel_rotate_one_joint():
     ctrl.rel_rotate(1, 5.0)   # joint_id 1-based
     assert t.sent[0].arbitration_id == 0x0200
     assert t.sent[0].data[1] == 0x00      # 相对标志
-    assert t.sent[0].data[5] == 0x32      # 5°×10=50 → 0x32
+    assert t.sent[0].data[6] == 0x32      # 5°×10=50 → 0x32 (位置低字节, 速度2B 之后)
 
 
 def test_tick_triggers_estop_when_stale():
@@ -1272,6 +1272,7 @@ import argparse
 import sys
 from pathlib import Path
 
+# 脚本位于 scripts/, 项目根在 parents[1] (与 zdt 测试文件不同)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lerobot_robot_massage.zdt.config import INIT_POSE_DEG, ZdtConfig

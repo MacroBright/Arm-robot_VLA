@@ -12,6 +12,7 @@ dependencies = [
     "pyserial",
     "numpy",
     "opencv-python",
+    "python-can[socketcan]",
 ]
 
 [tool.setuptools.packages.find]

@@ -653,8 +653,9 @@ git commit -m "feat(zdt): CAN 传输抽象 + SocketCAN 惰性导入后端 + 测�
     - `set_vel(addr, rpm, slope=0)`
     - `read_pos(addr) -> float`（°）
     - `read_current(addr) -> float`（mA）
+    - `read_flag(addr) -> int`（0x3A 状态字节：`&0x01=使能 &0x02=到位 &0x04=堵转 &0x08=堵转保护`）—— 2026-08-15 GitHub 调研 `cantest/Emm_V5_CAN.c` 发现，安全层堵转监测用
     - `set_zero(addr)`（0x93）/ `home(addr)`（0x9A）
-    - `on_arrived: Optional[Callable[[int],None]]` — 0xFD 到位事件回调（参数 addr）
+    - `on_arrived: Optional[Callable[[int],None]]` — 0xFD 到位事件回调（参数 addr；S_FLAG 轮询可用时其为补充）
 
 - [ ] **Step 1: 写失败测试** `lerobot_robot_massage/zdt/test_driver.py`
 
@@ -716,6 +717,17 @@ def test_read_current_parses():
     t.inject(0x03, 0x27, b"\x02\x00\x63\x6b")   # mA = 0x0063 = 99
     d = ZdtDriver(t, timeout_s=0.001, retries=0)
     assert abs(d.read_current(0x03) - 99.0) < 0.001
+
+
+def test_read_flag_parses_status_bits():
+    t = FakeTransport()
+    t.inject(0x03, 0x3A, b"\x07\x6b")   # 0x07 = 使能|到位|堵转
+    d = ZdtDriver(t, timeout_s=0.001, retries=0)
+    flag = d.read_flag(0x03)
+    assert flag & 0x01          # 使能
+    assert flag & 0x02          # 到位
+    assert flag & 0x04          # 堵转
+    assert not (flag & 0x08)    # 未触发堵转保护
 
 
 def test_read_timeout_raises_after_retries():
@@ -862,6 +874,15 @@ class ZdtDriver:
         """读相电流 (mA). 回帧 [27, mA高, mA低, 6B] — bring-up 核实布局."""
         data = self._request(addr, bytes([F_READ_CUR]), expect_response=True)
         return float((data[1] << 8) | data[2])
+
+    def read_flag(self, addr: int) -> int:
+        """读状态标志 (0x3A). 回帧 [3A, 状态字节, 6B].
+
+        状态位: &0x01=使能 &0x02=到位 &0x04=堵转 &0x08=堵转保护
+        (2026-08-15 GitHub 调研 cantest/Emm_V5_CAN.c 确认; 安全层堵转监测用)
+        """
+        data = self._request(addr, bytes([0x3A]), expect_response=True)
+        return data[1]
 
     # ── 内部: 发送 + 同步等回帧 + 重试 ─────────────────────
 
@@ -1486,11 +1507,13 @@ git commit -m "feat(zdt): MassageRobot 支持 can transport (协议对象按配�
 
 - [ ] **Step 2: 起 can0** — `sudo bash scripts/can_setup.sh can0`；`candump can0` 确认无异常帧。
 
-- [ ] **Step 3: 对照嗅探** — 用 STM32 串口 master 发 `rel_rotate`，`candump can0` 记录真实 0xFB 帧，与 `frames.py` 编码对比（核实位置符号位、0x0A/同步位布局）。
+- [ ] **Step 3: 位置命令判定（硬前置，任何运动命令之前必须完成）** — 用 STM32 串口 master 发 `rel_rotate`，`candump can0` 记录真实位置命令帧，确认本机 X-series V2 用 **`0xFB`（直通限速位置，ZDT 文档）** 还是 **`0xFD`（脉冲数，Emm_V5/GitHub 实测 `cantest`/`zeroarm-ros2-can`）**。据此修正 `zdt_driver.py` 的 `move_abs`/`move_rel` 载荷布局（0xFB 布局见 frames.py，0xFD 布局参考 Emm_V5：`FD dir 速度2B acc 脉冲4B raF snF`）。同时核实位置符号位、0x0A/同步位布局。
 
 - [ ] **Step 4: 单轴步进** — `python scripts/zdt_bringup.py status`（应读到 6 轴角度）→ `step 1 +5` → `status` 确认 +5° 到位。
 
 - [ ] **Step 5: 逐轴全通** — 6 轴依次 `step <j> ±N`，核对方向与到位（真机实测限位，更新 `config.DEFAULT_LIMITS`）。
+
+- [ ] **Step 5.5: 状态标志验证** — `read_flag()` 逐轴读 0x3A，确认运动时 `&0x02=到位` 置位、堵转时 `&0x04` 置位（安全层堵转监测依赖此命令）。
 
 - [ ] **Step 6: 急停/看门狗** — `estop` 立即停；拔适配器 → `tick()` 在 `watchdog_s` 内广播 e_stop。
 
@@ -1506,7 +1529,17 @@ git commit -m "feat(zdt): MassageRobot 支持 can transport (协议对象按配�
 
 1. **Plan 2 — 运动学与遥操**：`kinematics.py`（移植 `robot_kinematics.c` 解析式 IK + FK）→ `remote_event`/`end_event` 语义 → 控制器集成（spec §4.2-4.4）
 2. **Plan 3 — 视觉遥操接入**：`ArmClient` CAN 后端（`CanArmClient`），`demo_arm_teleop.py` 零改动（spec §5）
-3. **Plan 4 — 香橙派边缘部署**：可移植性核验、action-chunk 流式协议、22-DOF 扩展（spec §6）
+3. **Plan 4 — 香橙派边缘部署**：可移植性核验、action-chunk 流式协议、22-DOF 扩展（spec §6）。**参考实现：`hexchip/lerobot-on-ascend`**（Orange Pi AIpro 昇腾 310B + CANN + torch_npu 跑 LeRobot，确认芯片规格并给出部署流程）
+
+## 参考项目（2026-08-15 GitHub 调研）
+
+| 项目 | 验证点 |
+|------|--------|
+| `timessage/zeroarm-ros2-can` | SocketCAN 直连 Emm_V5 的 ROS2 驱动 —— 帧拆分/扩展帧 ID/(addr,func) 回帧匹配架构与我们一致 |
+| `zhanyinan150/cantest` | ZDT 第二代协议 STM32 实现 —— 帧约定确认 + **S_FLAG=0x3A 状态寄存器**（`&0x01=使能 &0x02=到位 &0x04=堵转 &0x08=堵转保护`）+ **位置命令用 0xFD 而非 0xFB**（代际差异） |
+| `unitreerobotics/unitree_lerobot` | 臂+灵巧手+LeRobot 采集→转换→训练→eval 全流程；我们走 LeRobot record 直接采集，更简洁 |
+| `hexchip/lerobot-on-ascend` | Orange Pi AIpro(昇腾310B) 跑 LeRobot —— 芯片定案 + CANN/torch_npu 部署流程 + 轻量策略(ACT) |
+| `imitrob/teleop_gesture_toolbox` | WristTracker 的参考来源 —— 手势+笛卡尔任务空间 servoing 遥操，模式成熟 |
 
 ## 自检记录
 

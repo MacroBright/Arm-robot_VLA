@@ -3,6 +3,7 @@
 > 日期：2026-08-15 | 状态：设计定稿，待实现
 > 范围：机械臂（6×ZDT X系列V2 闭环步进驱动）PC 直连 CAN 控制；Leap_Hand 腕部关键点视觉遥操接入；LeRobot 集成；最终部署到香橙派 AI Pro 边缘节点。
 > 依据：`docs/2026-08-14-zdt-driver-setup.md`、`docs/SERIAL_COMMANDS.md`、`docs/ARCHITECTURE.md`、参考固件 `armbot_example/zero-robotic-arm-master`、Leap_Hand SDK、LeRobot BYOH 文档。
+> 调研（2026-08-15 GitHub）：`timessage/zeroarm-ros2-can`（SocketCAN 直连 Emm_V5）、`zhanyinan150/cantest`（ZDT 协议 + S_FLAG=0x3A）、`unitreerobotics/unitree_lerobot`（臂+手 LeRobot 流程）、`hexchip/lerobot-on-ascend`（Orange Pi AIpro=昇腾310B 跑 LeRobot）、`imitrob/teleop_gesture_toolbox`（WristTracker 参考来源）。
 
 ---
 
@@ -131,6 +132,9 @@ can.txData[0] = cmd[1];                                            // cmd[1]=功
 | 速度模式 | `0xF6` | `斜率2B 速度2B 同步1B` | `remote_event`/`end_event` 关节速度（RPM×10） |
 | 读实时位置 | `0x36` | `-` | `get_state` 角度（×10） |
 | 读相电流 | `0x27` | `-` | `get_state` 电流（mA）→ 力控 |
+| 读状态标志 | `0x3A` | `-` | `read_flag()` 状态字节：`&0x01=使能 &0x02=到位 &0x04=堵转 &0x08=堵转保护`（2026-08-15 GitHub 调研 `cantest/Emm_V5_CAN.c` 发现；安全层堵转监测直接轮询此命令，优于监听 0xfd 到位帧） |
+
+> **⚠ 位置命令代际差异（2026-08-15 GitHub 调研）**：GitHub 上广泛使用的 Emm_V5 实现（`cantest`/`zeroarm-ros2-can`）位置控制用 **`0xFD`（4 字节脉冲数）**，而 ZDT 文档标注 **`0xFB`（直通限速位置）**。使能 F3/停止 FE/读位置 36 两代一致，**唯位置命令不同**。真机 bring-up 必须先用 candump 对照 STM32 已走通的报文确认本机 X-series V2 用哪个，再定驱动层 `move_abs`/`move_rel` 的载荷布局（plan Task 8 前置）。
 
 **bring-up/标定（工具用，不进核心路径）**：
 
@@ -317,8 +321,10 @@ RealSense → MediaPipe → build_palm_pts(3D关键点)
 
 | 节点 | 角色 | 运行内容 |
 |------|------|----------|
-| **PC (GPU)** | 训练 + 推理 | SmolVLA 训练/微调 · 推理出 action chunk · 评估/量化导出 |
+| **PC (GPU)** | 训练 + 推理 | SmolVLA 训练/微调 · 推理出 action chunk · 评估/量化导出 · 轻量策略(ACT/Diffusion)导出 |
 | **香橙派 AI Pro** | 机器人实时节点 | SocketCAN→6×ZDT 机械臂 · Dynamixel→16-DOF 灵巧手 · 相机+MediaPipe+WristTracker 视觉遥操 · LeRobot 本地采集 · 执行远端 action chunk |
+
+> **芯片定案（2026-08-15 GitHub 调研 `hexchip/lerobot-on-ascend`）**：Orange Pi AIpro 20T 为**华为昇腾 310B**（20 TOPS NPU），**非 RK3588**。该仓库已跑通"Orange Pi AIpro + CANN + torch_npu + Python3.11 + PyTorch2.5.1 跑 LeRobot"，是香橙派部署的**直接参考实现**。部署策略用**轻量 ACT/Diffusion**（板子可跑），重型 SmolVLA 训练/推理留 PC。
 
 ### 6.2 两条数据流
 
@@ -376,6 +382,7 @@ RealSense → MediaPipe → build_palm_pts(3D关键点)
 - [ ] 6 轴编码器校准完成（无 `Not Cal`）
 - [ ] 6 轴 `P_Serial=CAN1_MAP`、`CAN_Baud`/`ID_Addr`/`Checksum` 逐轴读回一致
 - [ ] PC `can0` 500k 扩展帧收发正常（candump 嗅探对比 STM32 报文）
+- [ ] **位置命令判定：candump 确认本机 X-series V2 用 `0xFB` 还是 `0xFD`**（两代命令不同，见 §2.3 注）
 - [ ] 每轴 `rel_rotate +N° / -N°` 方向正确、到位
 - [ ] 零点已设：回零后各轴 `get_state` 与固件初始位一致
 - [ ] `e_stop` 立即停、恢复正常
@@ -384,7 +391,7 @@ RealSense → MediaPipe → build_palm_pts(3D关键点)
 - [ ] 力阈值：超阈值 → 告警/停机
 - [ ] 视觉遥操真机跑通（H 离合器跟随 / 松开锚定）
 - [ ] 香橙派移植跑通（采集 + 控制）
-- [ ] 确认香橙派 AI Pro 芯片规格（RK3588 vs Ascend 310B）→ 决定未来本地推理框架（RKNN vs CANN）
+- [ ] 香橙派芯片确认为昇腾 310B（已由 lerobot-on-ascend 佐证），部署参考该仓库 CANN+torch_npu 流程
 
 ### 7.3 环境依赖
 
@@ -408,9 +415,9 @@ PC 端:  python-can[socketcan] · numpy · (LeRobot 现有依赖)
 
 | 风险 | 等级 | 缓解 |
 |------|:----:|------|
+| **位置命令代际差异：0xFB(ZDT 文档) vs 0xFD(Emm_V5, GitHub 实测)** | **高** | **真机 candump 对照 STM32 已走通报文（plan Task 8 Step 3）是任何运动命令的硬前置**；驱动层 move_abs/move_rel 载荷布局做成易切换配置 |
 | ZDT 帧载荷字段细节（0xFB 的 00/0A/同步位）可能需微调 | 低 | 参考固件 + candump 对比核实；bring-up 第 3 步验证 |
 | `set_torque 0` 后闭环步进能否被反拖（free-wheel）手动示教 | 中 | 真机验证；不行则示教改用 rel_rotate/视觉遥操 |
-| 香橙派芯片规格未确认（RK3588 vs Ascend 310B） | 低 | bring-up 时核实；仅影响未来本地推理框架，不影响 v1 架构 |
 | 香橙派 pyrealsense2 aarch64 版本兼容 | 中 | 提前验证；备选 v4l2/gstreamer 后端 |
 | 真机 FK 反馈误差（DH vs 装配） | 低 | DH 运行时微调 + 位置环死区容忍 |
-| 22-DOF SmolVLA 训练改动 | 中 | action space 扩展为配置项；先跑通 6-DOF 再扩手 |
+| 22-DOF 训练改动（SmolVLA/ACT/Diffusion） | 中 | action space 扩展为配置项；先跑通 6-DOF 再扩手；边缘部署用轻量 ACT/Diffusion（lerobot-on-ascend 已验证板子可跑） |

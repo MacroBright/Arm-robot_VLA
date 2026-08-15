@@ -17,8 +17,14 @@ class MassageRobotConfig(RobotConfig):
 
     Attributes:
         port: Serial port for STM32 communication (e.g., "COM3" on Windows,
-            "/dev/ttyUSB0" on Linux).
-        baudrate: Serial baud rate. Default 115200 (matches zero-robotic-arm firmware).
+            "/dev/ttyUSB0" on Linux). Only used when transport == "serial".
+        baudrate: Serial baud rate. Default 115200 (matches zero-robotic-arm
+            firmware). Only used when transport == "serial".
+        transport: Protocol backend selection, "serial" (STM32 gateway via
+            SerialProtocol) or "can" (PC 直连 CAN via ZdtController).
+        channel: Linux SocketCAN interface name (e.g., "can0"), used when
+            transport == "can".
+        can_bitrate: CAN bus bitrate in bits/s, used when transport == "can".
         joint_names: Human-readable names for each joint, in motor ID order (1-6).
         num_joints: Number of arm joints (default 6, expandable for dexterous hand).
         cameras: Camera configurations. Default: Intel RealSense D455 RGB stream
@@ -27,6 +33,10 @@ class MassageRobotConfig(RobotConfig):
 
     port: str = "COM3"
     baudrate: int = 115200
+
+    transport: str = "serial"       # "serial" | "can"
+    channel: str = "can0"           # transport=="can" 时用
+    can_bitrate: int = 500_000
 
     joint_names: list[str] = field(default_factory=lambda: [
         "shoulder_pan",    # Joint 1 — base rotation

@@ -44,10 +44,17 @@ class MassageRobot(Robot):
     def __init__(self, config: MassageRobotConfig):
         super().__init__(config)
         self.config = config
-        self._protocol = SerialProtocol(
-            port=config.port,
-            baudrate=config.baudrate,
-        )
+        if config.transport == "can":
+            # PC 直连 CAN (ZDT 驱动器), 不再经由 STM32 网关
+            from .zdt.config import ZdtConfig
+            from .zdt.controller import ZdtController
+            self._protocol = ZdtController(ZdtConfig(
+                channel=config.channel, bitrate=config.can_bitrate))
+        else:
+            self._protocol = SerialProtocol(
+                port=config.port,
+                baudrate=config.baudrate,
+            )
         # Build cameras at construction time (NOT in connect) so that
         # observation_features is callable before connecting — required by
         # the LeRobot Robot contract.

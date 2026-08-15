@@ -59,17 +59,17 @@ class ZdtDriver:
     def move_abs(self, addr: int, pos_deg: float, speed_rpm: float) -> None:
         """直通限速位置, 绝对. 位置(°)×10, 速度(RPM)×10.
 
-        命令体 10 字节 = FB 01 00 + 位置3B + 速度2B + 0A 00
-        (test_driver 锁定首帧 data[3:6]=位置3B; bring-up candump 核实, spec §9).
+        ZDT 文档布局 速度在前: FB 01 + 速度2B + 位置3B + 0A 00
+        (首帧 data[4:7]=位置3B; bring-up candump 核实, spec §9).
         """
-        body = (bytes([F_POS, 0x01, 0x00]) + encode_pos3(pos_deg)
-                + encode_vel2(speed_rpm) + b"\x0a\x00")
+        body = (bytes([F_POS, 0x01]) + encode_vel2(speed_rpm)
+                + encode_pos3(pos_deg) + b"\x0a\x00")
         self._request(addr, body, expect_response=False)
 
     def move_rel(self, addr: int, delta_deg: float, speed_rpm: float) -> None:
         """直通限速位置, 相对."""
-        body = (bytes([F_POS, 0x00, 0x00]) + encode_pos3(delta_deg)
-                + encode_vel2(speed_rpm) + b"\x0a\x00")
+        body = (bytes([F_POS, 0x00]) + encode_vel2(speed_rpm)
+                + encode_pos3(delta_deg) + b"\x0a\x00")
         self._request(addr, body, expect_response=False)
 
     def set_vel(self, addr: int, rpm: float, slope: float = 0.0) -> None:
@@ -97,9 +97,9 @@ class ZdtDriver:
         return decode_pos3(data[2:5], sign)
 
     def read_current(self, addr: int) -> float:
-        """读相电流 (mA). 回帧 [27, 保留字节, mA高, mA低, 6B] — bring-up 核实布局."""
+        """读相电流 (mA). 回帧 [27, mA高, mA低, 6B] — bring-up 核实布局."""
         data = self._request(addr, bytes([F_READ_CUR]), expect_response=True)
-        return float((data[2] << 8) | data[3])
+        return float((data[1] << 8) | data[2])
 
     def read_flag(self, addr: int) -> int:
         """读状态标志 (0x3A). 回帧 [3A, 状态字节, 6B].

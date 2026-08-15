@@ -38,8 +38,8 @@ def test_move_abs_payload_split():
     assert [f.arbitration_id for f in t.sent] == [0x0500, 0x0501]
     assert t.sent[0].data[0] == F_POS
     assert t.sent[1].data[0] == F_POS
-    # 位置 90.0×10=900 → 0x000384 (data[3:6])
-    assert t.sent[0].data[3:6] == bytes([0x00, 0x03, 0x84])
+    # ZDT 文档布局 速度在前: FB 01 + 速度2B + 位置3B; 位置 90.0×10=900 → 0x000384 (data[4:7])
+    assert t.sent[0].data[4:7] == bytes([0x00, 0x03, 0x84])
 
 
 def test_read_pos_parses():
@@ -52,7 +52,7 @@ def test_read_pos_parses():
 
 def test_read_current_parses():
     t = FakeTransport()
-    t.inject(0x03, 0x27, b"\x02\x00\x63\x6b")   # mA = 0x0063 = 99
+    t.inject(0x03, 0x27, b"\x00\x63\x6b")   # mA = 0x0063 = 99 (无保留字节, data[1:3])
     d = ZdtDriver(t, timeout_s=0.001, retries=0)
     assert abs(d.read_current(0x03) - 99.0) < 0.001
 

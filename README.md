@@ -103,10 +103,10 @@ pip install mujoco==3.10.0          # MuJoCo 物理仿真 (env 重建后必装; 
 `site-packages/__editable__.lerobot_robot_massage-0.1.0.pth` 指向包目录自身
 `.../Arm-robot_VLA/lerobot_robot_massage`，导致 `import lerobot_robot_massage` 失败
 （`importlib.metadata` 可见发行版但模块不可导入，`massage_robot` 注册也静默失效）。
-**修复**：把 `.pth` 内容改成包**父目录**：
+**修复**：把 `.pth` 内容改成包**父目录**（项目整合到 TuinaDex 后的新路径）：
 
 ```bash
-echo '/home/bright/office/Arm-robot_VLA' > \
+echo '/home/bright/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA' > \
   /home/bright/win_office/conda/envs/smolvla/lib/python3.10/site-packages/__editable__.lerobot_robot_massage-0.1.0.pth
 ```
 

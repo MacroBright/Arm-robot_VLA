@@ -109,7 +109,7 @@
 - [ ] 小规模训练验证 (SmolVLA)
 
 > **环境重装提示**：Ubuntu conda 环境（`smolvla`，envs 在 E盘 NTFS）的安装步骤与
-> pip editable `.pth` 修复见 `README.md` §2.5。
+> pip 见 `scripts/setup_dev.sh`（自动处理 editable install）。
 
 ## 七、多窗口并行工作流
 

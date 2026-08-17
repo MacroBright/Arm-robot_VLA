@@ -82,7 +82,7 @@ conda create -n smolvla python=3.10 -y
 conda activate smolvla
 ```
 
-> 依赖安装、插件 editable `.pth` 修复、验证命令的完整步骤见 README §2.5「Ubuntu conda 部署」。
+> 依赖安装与验证见 `scripts/setup_dev.sh`，或参考 README「快速开始」章节。
 
 ### Step 3: 安装 Python 依赖
 
@@ -101,8 +101,8 @@ pip install pillow                 # 图像处理
 pip install PyOpenGL               # OpenGL 绑定
 pip install pyserial               # 串口通信 (STM32)
 
-# LeRobot 插件 (Linux 需 compat editable 模式, 见 README §2.5)
-pip install -e lerobot_robot_massage/ --config-settings editable_mode=compat
+# LeRobot 插件 (见 scripts/setup_dev.sh)
+pip install -e lerobot_robot_massage
 ```
 
 > 或者从当前机器导出精确版本：

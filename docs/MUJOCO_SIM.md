@@ -48,8 +48,8 @@ pip install pyserial              # 串口协议 (socket:// 模式不需要真�
 # 手柄遥控 (仅桌面环境)
 pip install pygame                # USB 手柄读取
 
-# LeRobot 插件 (可选, 用于 MassageRobot 集成; Linux 需 compat editable, 见 README §2.5)
-pip install -e lerobot_robot_massage --config-settings editable_mode=compat
+# LeRobot 插件 (可选, 用于 MassageRobot 集成; 见 scripts/setup_dev.sh)
+pip install -e lerobot_robot_massage
 ```
 
 ### 2.2 验证安装

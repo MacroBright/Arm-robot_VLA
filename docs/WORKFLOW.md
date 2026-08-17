@@ -170,7 +170,7 @@ python scripts\record_trajectory.py --port COM5 --camera 1 --duration 20
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| 手柄控制 | `scripts/joystick_control.py` | pygame 读取手柄 -> 串口控制 |
+| 手柄控制 | `scripts/control/joystick_control.py` | pygame 读取手柄 -> 串口控制 |
 | 轨迹录制 | `scripts/record_trajectory.py` | 定时读取状态 + 相机（待创建）|
 | 串口协议 | `lerobot_robot_massage/serial_protocol.py` | 底层串口封装 |
 | 数据集 | `datasets/raw/` | 录制结果存储 |

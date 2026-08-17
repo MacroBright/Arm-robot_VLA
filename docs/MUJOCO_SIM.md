@@ -79,7 +79,7 @@ scripts/
 ### 3.1 基本启动 (带 3D 可视化)
 
 ```bash
-python scripts/mujoco_sim.py
+python scripts/simulation/mujoco_sim.py
 ```
 
 启动后弹出 MuJoCo viewer 窗口，鼠标可旋转/缩放视角。
@@ -95,7 +95,7 @@ python scripts/mujoco_sim.py
 ### 3.2 无头模式 (服务器 / 无 GUI)
 
 ```bash
-python scripts/mujoco_sim.py --no-viewer
+python scripts/simulation/mujoco_sim.py --no-viewer
 ```
 
 不启动 viewer，TCP 服务和离屏渲染仍正常运行。
@@ -103,7 +103,7 @@ python scripts/mujoco_sim.py --no-viewer
 > 若渲染帧全黑，安装虚拟显示:
 > ```bash
 > sudo apt install xvfb
-> xvfb-run python scripts/mujoco_sim.py --no-viewer
+> xvfb-run python scripts/simulation/mujoco_sim.py --no-viewer
 > ```
 
 ---
@@ -117,7 +117,7 @@ python scripts/mujoco_sim.py --no-viewer
 ```bash
 # 先激活 conda 环境
 conda activate smolvla
-python scripts/joystick_control.py --port socket://localhost:5555 --camera 0
+python scripts/control/joystick_control.py --port socket://localhost:5555 --camera 0
 ```
 
 ### 4.2 按键映射
@@ -142,8 +142,8 @@ python scripts/joystick_control.py --port socket://localhost:5555 --camera 0
 ### 4.3 操作流程
 
 ```
-1. 终端 1: python scripts/mujoco_sim.py
-2. 终端 2: python scripts/joystick_control.py --port socket://localhost:5555
+1. 终端 1: python scripts/simulation/mujoco_sim.py
+2. 终端 2: python scripts/control/joystick_control.py --port socket://localhost:5555
 3. 按 A → 进入遥控 (机械臂回 soft_reset 姿态)
 4. 按 X → 使能扭矩
 5. 推摇杆控制机械臂
@@ -213,8 +213,8 @@ datasets/sim_v1/
 ### 5.4 完整录制流程 (3 终端)
 
 ```
-终端 1: python scripts/mujoco_sim.py                  ← 仿真后端
-终端 2: python scripts/joystick_control.py \          ← 手柄控制
+终端 1: python scripts/simulation/mujoco_sim.py                  ← 仿真后端
+终端 2: python scripts/control/joystick_control.py \          ← 手柄控制
              --port socket://localhost:5555
 终端 3: python scripts/record_sim.py --duration 20    ← 数据录制
 
@@ -299,7 +299,7 @@ datasets/sim_v1/
 
 ```bash
 # 终端 1: 启动仿真
-python scripts/mujoco_sim.py --no-viewer
+python scripts/simulation/mujoco_sim.py --no-viewer
 
 # 终端 2: 发送命令
 python -c "
@@ -337,7 +337,7 @@ s.close()
 | `No module named 'mujoco'` | 未安装 | `pip install mujoco` |
 | Viewer 闪退 | 无 GPU | `--no-viewer` 无头模式 |
 | `OpenGL error 0x502` | 软件渲染 | 可忽略, 帧仍正常 |
-| 渲染帧全黑 | 无 GL 上下文 | `xvfb-run python scripts/mujoco_sim.py --no-viewer` |
+| 渲染帧全黑 | 无 GL 上下文 | `xvfb-run python scripts/simulation/mujoco_sim.py --no-viewer` |
 | SharedMemory 不存在 | sim 未启动 | 先启动 mujoco_sim.py |
 | `No module named 'pygame'` | 未安装 | `pip install pygame` (需桌面) |
 | J2 关节超调 | PD 偏高 | 编辑 scene.xml 降 kp |
@@ -351,10 +351,10 @@ s.close()
 
 ```bash
 # 仿真
-python scripts/joystick_control.py --port socket://localhost:5555
+python scripts/control/joystick_control.py --port socket://localhost:5555
 
 # 实物 (STM32 接 COM5)
-python scripts/joystick_control.py --port COM5
+python scripts/control/joystick_control.py --port COM5
 ```
 
 仿真数据用途:

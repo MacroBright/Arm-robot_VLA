@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from lerobot_robot_massage.zdt.config import INIT_POSE_DEG, ZdtConfig
 from lerobot_robot_massage.zdt.controller import ZdtController

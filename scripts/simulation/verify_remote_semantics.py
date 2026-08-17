@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 
 PORT = 5588
-ROOT = Path(__file__).resolve().parent.parent
-SIM_CMD = [sys.executable, str(ROOT / "scripts" / "mujoco_sim.py"),
+ROOT = Path(__file__).resolve().parent.parent.parent
+SIM_CMD = [sys.executable, str(ROOT / "scripts" / "simulation" / "mujoco_sim.py"),
            "--port", str(PORT), "--ik", "--no-camera"]
 
 

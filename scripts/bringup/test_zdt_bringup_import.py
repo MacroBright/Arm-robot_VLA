@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from lerobot_robot_massage import ZdtConfig, ZdtController  # noqa: E402
@@ -14,14 +14,14 @@ def test_top_level_export():
 
 
 def test_cli_help_exits_zero():
-    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "zdt_bringup.py"),
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "bringup" / "zdt_bringup.py"),
                         "--help"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
 
 def test_cli_status_parses_args():
     # 无 CAN 硬件: connect 会抛错, 但 argparse 应正确解析 (stderr 不应含 "usage" 用法错误)
-    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "zdt_bringup.py"),
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "bringup" / "zdt_bringup.py"),
                         "status", "--n", "1"], capture_output=True, text=True, timeout=15)
     assert "usage" not in r.stderr, r.stderr
 

@@ -39,10 +39,31 @@ Arm-robot_VLA/
 │   ├── WORKFLOW.md                        ← 开发工作流 + 文件索引
 │   └── SERIAL_COMMANDS.md                 ← 14 条串口命令参考
 │
-├── scripts/
-│   ├── joystick_control.py                ← **USB 手柄遥控机械臂**
-│   ├── test_serial.py                     ← 串口通信测试
-│   └── verify_interface.py                ← LeRobot 接口规范验证
+├── scripts/                                ← 全部按功能分类到子目录
+│   ├── README_手柄控制移植.md
+│   ├── teleop/                             ← 视觉遥操
+│   │   ├── demo_arm_teleop.py              ← **人手 6DOF → 末端位姿 → 速度命令**
+│   │   ├── arm_client.py                   ← 串口薄客户端
+│   │   ├── handeye_calib.py                ← 手眼标定
+│   │   ├── home_pose.json + handeye_calib.json ← 运行时数据
+│   │   └── test_arm_client.py + test_handeye_calib.py
+│   ├── simulation/                         ← MuJoCo 仿真
+│   │   ├── mujoco_sim.py                   ← **MuJoCo 仿真臂 + 7 自由度 IK**
+│   │   ├── camera_server.py + shm_util.py  ← 共享内存相机帧
+│   │   ├── record_sim.py                   ← 仿真数据录制
+│   │   ├── remote_semantics.py + verify_remote_semantics.py + test_remote_semantics.py
+│   │   └── mujoco_scene/                   ← 场景资源
+│   ├── control/                            ← 实时控制
+│   │   ├── joystick_control.py             ← **USB 手柄遥控机械臂**
+│   │   └── control_hub.py                  ← 多窗口控制中枢
+│   ├── bringup/                            ← 硬件 bringup + 系统脚本
+│   │   ├── zdt_bringup.py                  ← ZDT 直连 CAN 命令行
+│   │   ├── can_setup.sh + startup.sh + setup_headless.sh + deploy_remote.sh
+│   │   └── test_zdt_bringup_import.py + test_massage_robot_can.py
+│   └── data_tools/                         ← 数据处理与模型诊断
+│       ├── convert_to_lerobot.py           ← 数据格式转换
+│       ├── diagnose_model.py               ← 模型诊断
+│       └── evaluate_policy.py              ← 策略评估
 │
 ├── datasets/                              ← 采集数据集（gitignored）
 ├── outputs/                               ← 训练模型（gitignored）
@@ -142,7 +163,7 @@ python scripts/test_serial.py --port COM5
 ### 5. 手柄遥控
 
 ```powershell
-python scripts/joystick_control.py --port COM5 --camera 1
+python scripts/control/joystick_control.py --port COM5 --camera 1
 ```
 
 按键参考：

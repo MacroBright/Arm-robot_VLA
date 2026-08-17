@@ -39,10 +39,10 @@ import cv2
 import numpy as np
 
 # ─── sys.path 注入 ───
-# 1. 本仓 scripts/ (含 arm_client / handeye_calib)
+# 1. 本仓 scripts/teleop/ (含 arm_client / handeye_calib)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # 2. Leap_Hand 仓的视觉 + 手跟踪共享模块 (跨仓库)
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Leap_Hand" / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "Leap_Hand" / "python"))
 
 # arm-only (本仓)
 from arm_client import ArmClient  # noqa: E402

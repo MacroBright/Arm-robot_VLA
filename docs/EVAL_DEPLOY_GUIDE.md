@@ -13,11 +13,11 @@
 ```
 需复制到目标机器:
   outputs/smolvla_massage/          ← 训练产出 (3 GB)
-  scripts/evaluate_policy.py        ← 评估脚本
-  scripts/mujoco_sim.py             ← 仿真主程序
+  scripts/data_tools/evaluate_policy.py        ← 评估脚本
+  scripts/simulation/mujoco_sim.py             ← 仿真主程序
   scripts/mujoco_scene/scene.xml    ← 场景模型
-  scripts/camera_server.py          ← 相机渲染
-  scripts/shm_util.py               ← 共享内存工具 (如果存在)
+  scripts/simulation/camera_server.py          ← 相机渲染
+  scripts/simulation/shm_util.py               ← 共享内存工具 (如果存在)
   datasets/lerobot_v1/videos/       ← 视频文件 (如果也要跑完整仿真)
 ```
 
@@ -67,10 +67,10 @@ print(f'OK: {sum(p.numel() for p in policy.parameters()):,} params')
 ```bash
 # 终端 1: 启动仿真
 cd /path/to/Arm-robot_VLA
-MUJOCO_GL=glfw python scripts/mujoco_sim.py --ik --trail 500 --viewer
+MUJOCO_GL=glfw python scripts/simulation/mujoco_sim.py --ik --trail 500 --viewer
 
 # 终端 2: 等仿真就绪后运行评估
-python scripts/evaluate_policy.py \
+python scripts/data_tools/evaluate_policy.py \
     --checkpoint outputs/smolvla_massage/checkpoints/last \
     --episodes 30
 ```

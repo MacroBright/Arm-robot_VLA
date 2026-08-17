@@ -34,7 +34,7 @@ from pathlib import Path
 import pygame
 import cv2
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from lerobot_robot_massage.serial_protocol import EmergencyStopError, SerialProtocol
 
 

@@ -43,7 +43,7 @@ sudo apt install -y xvfb
 
 启动时使用：
 ```bash
-xvfb-run python scripts/mujoco_sim.py --no-viewer
+xvfb-run python scripts/simulation/mujoco_sim.py --no-viewer
 ```
 
 ### 2.3 可选 (GPU 加速渲染)
@@ -152,7 +152,7 @@ ls /dev/ttyACM*            # 或 /dev/ttyACM0
 
 ```bash
 # 先用 MuJoCo viewer 测试 (需要显示器)
-MUJOCO_GL=glfw python scripts/mujoco_sim.py --viewer
+MUJOCO_GL=glfw python scripts/simulation/mujoco_sim.py --viewer
 
 # 如果弹出了 3D 窗口 → 渲染正常
 # 按 Ctrl+C 退出
@@ -162,7 +162,7 @@ MUJOCO_GL=glfw python scripts/mujoco_sim.py --viewer
 ```bash
 export MUJOCO_GL=glfw
 export LIBGL_ALWAYS_SOFTWARE=1
-python scripts/mujoco_sim.py --viewer
+python scripts/simulation/mujoco_sim.py --viewer
 ```
 
 ---
@@ -243,10 +243,10 @@ conda activate smolvla
 ```bash
 # 尝试软件渲染
 export LIBGL_ALWAYS_SOFTWARE=1
-MUJOCO_GL=glfw python scripts/mujoco_sim.py --viewer
+MUJOCO_GL=glfw python scripts/simulation/mujoco_sim.py --viewer
 
 # 或者直接无头模式
-python scripts/mujoco_sim.py --no-viewer
+python scripts/simulation/mujoco_sim.py --no-viewer
 ```
 
 ### Q: pygame 找不到手柄？
@@ -268,10 +268,10 @@ sudo usermod -a -G input $USER
 
 ```bash
 # 仿真
-python scripts/joystick_control.py --port socket://localhost:5555
+python scripts/control/joystick_control.py --port socket://localhost:5555
 
 # 真机 (STM32 串口)
-python scripts/joystick_control.py --port /dev/ttyUSB0
+python scripts/control/joystick_control.py --port /dev/ttyUSB0
 ```
 
 ### Q: MuJoCo 需要 license 吗？

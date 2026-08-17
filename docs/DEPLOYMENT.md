@@ -410,7 +410,7 @@ pip install pygame
 ```
 1. 给 STM32 上电 → 等待启动完成
 2. 给所有电机上 24V 电源
-3. 运行手柄脚本: python scripts/joystick_control.py
+3. 运行手柄脚本: python scripts/control/joystick_control.py
 4. 按 A 键 → remote_enable（软复位到初始姿态）
 5. 按 X 键 → set_torque 1（使能电机）
 6. 开始摇杆控制
@@ -518,7 +518,7 @@ print(f'录制完成，共 {len(states)} 帧')
 运行方式：
   1. 本机先插好手柄
   2. STM32 上电、电机上电
-  3. 在一个终端跑手柄控制:   python scripts/joystick_control.py
+  3. 在一个终端跑手柄控制:   python scripts/control/joystick_control.py
   4. 在另一个终端跑本脚本:    python scripts/record_trajectory.py
 
 本脚本只负责记录（get_state + 相机帧），机械臂控制由手柄脚本负责。
@@ -796,7 +796,7 @@ python scripts\verify_interface.py
 | 文件 | 用途 |
 |------|------|
 | `lerobot_robot_massage/` | LeRobot 插件包（核心代码） |
-| `scripts/joystick_control.py` | 手柄遥控脚本 |
+| `scripts/control/joystick_control.py` | 手柄遥控脚本 |
 | `scripts/record_trajectory.py` | 轨迹录制脚本（建议新建） |
 | `scripts/verify_interface.py` | 接口规范验证（不接硬件） |
 | `scripts/test_serial.py` | 串口通信测试 |

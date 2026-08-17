@@ -25,7 +25,7 @@ MassageRobot         ──socket:5555──→ SerialProtocol ──→ LeRobot
 | 文件 | 状态 | 说明 |
 |------|:----:|------|
 | [serial_protocol.py](../lerobot_robot_massage/serial_protocol.py) | ✅ 不动 | 已支持 `socket://` URL, 线程安全 (RLock) |
-| [joystick_control.py](../scripts/joystick_control.py) | ✅ 不动 | 手柄遥控, `--port socket://localhost:5555` 直连仿真 |
+| [joystick_control.py](../scripts/control/joystick_control.py) | ✅ 不动 | 手柄遥控, `--port socket://localhost:5555` 直连仿真 |
 | [massage_robot.py](../lerobot_robot_massage/massage_robot.py) | ✅ 不动 | LeRobot Robot 子类, `get_observation()` + `send_action()` |
 | [fake_stm32.py](../scripts/fake_stm32.py) | ✅ 保留 | 简单恒速模型, 快速验证用 |
 
@@ -222,7 +222,7 @@ xcopy "d:\robo arm\software\zero-robotic-arm\5. Deep_LR\meshes\*" scripts\mujoco
    <light directional="true" diffuse="0.8 0.8 0.8" pos="0 0 2"/>
    ```
 
-### Step 3: 创建 `scripts/mujoco_sim.py`
+### Step 3: 创建 `scripts/simulation/mujoco_sim.py`
 
 **核心思路**：完全复用 `fake_stm32.py` 的命令解析和 TCP 框架，只替换物理引擎。
 
@@ -313,10 +313,10 @@ def record_episode(port, duration_s=20, fps=30, output="datasets/sim_v1"):
 **录制流程**（3 个终端）：
 ```powershell
 # 终端 1: 启动 MuJoCo 仿真
-python scripts/mujoco_sim.py
+python scripts/simulation/mujoco_sim.py
 
 # 终端 2: 手柄遥控（此时 MuJoCo viewer 中手臂可见）
-python scripts/joystick_control.py --port socket://localhost:5555 --camera 0
+python scripts/control/joystick_control.py --port socket://localhost:5555 --camera 0
 
 # 终端 3: 数据录制
 python scripts/record_sim.py --duration 20 --output datasets/sim_v1

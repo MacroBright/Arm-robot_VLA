@@ -66,7 +66,7 @@ SHM_NAME_EE = "mujoco_frame_ee"   # 末端相机共享内存
 SHM_HEADER_SIZE = 64
 
 DEFAULT_TCP_PORT = 5555
-SCENE_PATH = Path(__file__).resolve().parent / "mujoco_scene" / "scene.xml"
+SCENE_PATH = Path(__file__).resolve().parent / "scene.xml"
 
 
 def log(msg: str) -> None:
@@ -81,7 +81,8 @@ def log(msg: str) -> None:
 class MuJoCoArm:
     """6-DOF 机械臂的 MuJoCo 仿真模型 + 固件协议命令解析器。"""
 
-    def __init__(self, scene_path: str, use_ik: bool = False) -> None:
+    def __init__(self, scene_path: str, use_ik: bool = False,
+                 enable_frame_buffers: bool = True) -> None:
         # ── 加载 MuJoCo 模型 ──
         self.model = mujoco.MjModel.from_xml_path(str(scene_path))
         self.data = mujoco.MjData(self.model)
@@ -159,25 +160,30 @@ class MuJoCoArm:
         self._cached_target_pos[:] = self.data.xpos[self._target_body_id]
 
         # ── 共享内存帧缓冲 ──
-        shm_size = SHM_HEADER_SIZE + FRAME_WIDTH * FRAME_HEIGHT * 3
-        try:
-            old = shared_memory.SharedMemory(name=SHM_NAME)
-            old.close()
-            old.unlink()
-        except FileNotFoundError:
-            pass
-        try:
-            old = shared_memory.SharedMemory(name=SHM_NAME_EE)
-            old.close()
-            old.unlink()
-        except FileNotFoundError:
-            pass
-        self._shm = shared_memory.SharedMemory(
-            create=True, size=shm_size, name=SHM_NAME)
-        self._shm_ee = shared_memory.SharedMemory(
-            create=True, size=shm_size, name=SHM_NAME_EE)
+        self._shm = None
+        self._shm_ee = None
+        if enable_frame_buffers:
+            shm_size = SHM_HEADER_SIZE + FRAME_WIDTH * FRAME_HEIGHT * 3
+            try:
+                old = shared_memory.SharedMemory(name=SHM_NAME)
+                old.close()
+                old.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                old = shared_memory.SharedMemory(name=SHM_NAME_EE)
+                old.close()
+                old.unlink()
+            except FileNotFoundError:
+                pass
+            self._shm = shared_memory.SharedMemory(
+                create=True, size=shm_size, name=SHM_NAME)
+            self._shm_ee = shared_memory.SharedMemory(
+                create=True, size=shm_size, name=SHM_NAME_EE)
+            log(f"共享内存已创建: {SHM_NAME}, {SHM_NAME_EE}")
+        else:
+            log("相机已禁用，不创建共享内存。")
         self._frame_counter = 0
-        log(f"共享内存已创建: {SHM_NAME}, {SHM_NAME_EE}")
 
         # ── 日志节流 ──
         self._get_state_count = 0
@@ -709,13 +715,17 @@ class MuJoCoArm:
         return f"J1-J6 [{ang}]  {mode}  扭矩:{torque}  get_state: {n}次/2s"
 
     def cleanup(self) -> None:
+        released = False
         for shm in (self._shm, self._shm_ee):
+            if shm is None:
+                continue
             try:
                 shm.close()
                 shm.unlink()
+                released = True
             except Exception:
                 pass
-        log("共享内存已释放。")
+        log("共享内存已释放。" if released else "共享内存未启用。")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -837,7 +847,11 @@ def main() -> None:
 
     # ── 加载模型 ──
     log(f"加载场景: {scene_path}")
-    arm = MuJoCoArm(str(scene_path), use_ik=args.ik)
+    arm = MuJoCoArm(
+        str(scene_path),
+        use_ik=args.ik,
+        enable_frame_buffers=not args.no_camera,
+    )
     if args.ik:
         log("Jacobian IK 笛卡尔控制已启用")
         log("remote_event 语义: vx/vy/vz 基座系线速度 (与固件 robot_cmd.c 一致)")

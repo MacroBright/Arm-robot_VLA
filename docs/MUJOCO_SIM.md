@@ -100,6 +100,16 @@ python scripts/simulation/mujoco_sim.py --no-viewer
 
 不启动 viewer，TCP 服务和离屏渲染仍正常运行。
 
+共享服务器上只验证物理与 TCP 协议时，建议同时禁用相机：
+
+```bash
+python scripts/simulation/mujoco_sim.py --no-viewer --no-camera
+```
+
+`--no-camera` 会同时禁用相机子进程和两个共享内存帧缓冲，不会访问或删除
+`mujoco_frame_0`、`mujoco_frame_ee`，因此不会与服务器上的其他用户冲突。
+状态读取、关节控制、急停和 MuJoCo 物理步进仍可正常使用。
+
 > 若渲染帧全黑，安装虚拟显示:
 > ```bash
 > sudo apt install xvfb

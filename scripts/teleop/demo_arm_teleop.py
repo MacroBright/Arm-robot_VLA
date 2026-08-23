@@ -71,8 +71,8 @@ _CALIB_STEP_HINTS = [
 ]
 _DIR_CODE_HINT = "方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)"
 
-# 软复位目标: 各关节初始位 J1..J6 (与仿真 INIT_POSE_DEG 一致)
-INIT_POSE_DEG = [90.0, 45.0, 90.0, 90.0, 0.0, 0.0]
+# 软复位目标: 各关节初始位 J1..J6 (与 zdt/config.py JOINT_INIT_ANGLE_DEG 权威值一致)
+INIT_POSE_DEG = [90.0, 90.0, -90.0, 0.0, 90.0, 0.0]
 HOME_POSE_PATH = Path(__file__).resolve().parent / "home_pose.json"
 REC_STEP_DEG = 5.0        # 录制模式单关节步进角度
 

@@ -56,6 +56,7 @@ def encode_pos3(pos_deg: float) -> bytes:
     """位置(°)×10 → 3 字节大端, 符号-幅值 (最高位=符号).
 
     约定需 bring-up candump 核实 (ZDT 文档未明示命令侧符号位, spec §9 风险表).
+    ⚠ 此函数仅供旧协议兼容; Emm42 V5.0 0x36 响应用 decode_pos4.
     """
     q = int(round(pos_deg * POS_SCALE))
     sign = 0x80 if q < 0 else 0x00
@@ -64,11 +65,12 @@ def encode_pos3(pos_deg: float) -> bytes:
 
 
 def decode_pos3(data3: bytes, sign: Optional[int] = None) -> float:
-    """3 字节位置(×10) + 符号 → 度.
+    """3 字节位置(×10) + 符号 → 度 (旧协议兼容).
 
     sign=None 时从 data3[0] 最高位推导符号 (与 encode_pos3 的
     符号-幅值约定一致); 调用方传显式 sign (如 driver read_pos 从回帧
     符号字节传) 时保持显式符号. 保证同一约定下负数 round-trip 互逆.
+    ⚠ 此函数仅供旧协议兼容; Emm42 V5.0 0x36 响应用 decode_pos4.
     """
     v = ((data3[0] & 0x7F) << 16) | (data3[1] << 8) | data3[2]
     if sign is None:
@@ -76,12 +78,46 @@ def decode_pos3(data3: bytes, sign: Optional[int] = None) -> float:
     return v / POS_SCALE * sign
 
 
+# ── Emm42 V5.0 0x36 真实位置 (4字节) ──────────────────────
+# 说明书 §0x36 + 固件 robot.c:1041-1056 一致: position = 4 字节,
+# 值 0~65535 = 电机轴1圈, 换算 angle = value × 360 / 65536.
+# 符号由独立字节 data[1] 指示 (0x00=正, 0x01=负), 非符号-幅值编码.
+
+def decode_pos4(data4: bytes, sign: int = 1) -> float:
+    """4 字节位置 → 度 (Emm42 V5.0 0x36 响应).
+
+    data4 = [pos_B3, pos_B2, pos_B1, pos_B0] (大端, 4 字节).
+    angle = unsigned_value × 360 / 65536 × sign.
+    sign: 1=正, -1=负 (从回帧 data[1] 符号字节传入).
+    """
+    v = (data4[0] << 24) | (data4[1] << 16) | (data4[2] << 8) | data4[3]
+    return v * 360.0 / 65536.0 * sign
+
+
+def encode_pos4(pos_deg: float) -> bytes:
+    """度 → 4 字节大端位置 (decode_pos4 的逆, 测试/注入用).
+
+    将角度转为 Emm42 V5.0 0x36 的4字节位置值 (×65536/360).
+    仅编码幅值; 符号由调用方在 data[1] 单独设置.
+    """
+    v = int(round(abs(pos_deg) * 65536.0 / 360.0)) & 0xFFFFFFFF
+    return bytes([(v >> 24) & 0xFF, (v >> 16) & 0xFF,
+                  (v >> 8) & 0xFF, v & 0xFF])
+
+
 def encode_vel2(rpm: float) -> bytes:
-    """转速(RPM)×10 → 2 字节大端."""
+    """转速 (RPM 直传) → 2 字节大端."""
     q = int(round(rpm * VEL_SCALE)) & 0xFFFF
     return bytes([q >> 8, q & 0xFF])
 
 
+def encode_pulse4(n: int) -> bytes:
+    """脉冲数 → 4 字节大端 (固件 Emm_V5_Pos_Control 的 32 位脉冲字段)."""
+    n &= 0xFFFFFFFF
+    return bytes([(n >> 24) & 0xFF, (n >> 16) & 0xFF,
+                  (n >> 8) & 0xFF, n & 0xFF])
+
+
 def decode_vel2(data2: bytes) -> float:
-    """2 字节速度(×10) → RPM."""
+    """2 字节速度 (RPM 直传, VEL_SCALE=1) → RPM."""
     return ((data2[0] << 8) | data2[1]) / VEL_SCALE

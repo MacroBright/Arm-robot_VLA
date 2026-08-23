@@ -1,32 +1,51 @@
 # SmolVLA training configuration for massage robot
 # Usage: python lerobot/scripts/train.py --config=configs/train_smolvla.yaml
+#
+# 格式: lerobot 0.4.4 (draccus 解析 TrainPipelineConfig dataclass)
+#       扁平字段 + 嵌套子 config，不支持 training:/output: 分组
 
+# ─── 数据集 ───
+dataset:
+  repo_id: ./datasets/massage_v1      # 本地路径 (LeRobotDataset 目录)
+
+# ─── 模型 ───
 policy:
   type: smolvla
-  # Use pre-trained base model for fine-tuning
-  path: lerobot/smolvla_base
+  pretrained_path: lerobot/smolvla_base   # 从 HuggingFace Hub 加载预训练基座
 
-dataset:
-  repo_id: ./datasets/massage_v1
-  local_files_only: true
-
-training:
-  batch_size: 64
-  steps: 200000
-  learning_rate: 1.0e-4
-  weight_decay: 1.0e-6
+# ─── 优化器 (SmolVLAConfig 内联字段) ───
+optimizer:
+  lr: 1e-4
+  weight_decay: 1e-6
   grad_clip_norm: 1.0
 
-  # Hardware
-  device: cuda  # "cpu" if no GPU
+# ─── 评估 ───
+eval:
+  n_episodes: 50
+  batch_size: 50
+  use_async_envs: false
 
-  # Logging
-  wandb:
-    enable: false
-  log_interval: 100
-  save_interval: 10000
-  eval_interval: 50000
+# ─── 训练 ───
+batch_size: 64
+steps: 200000
+num_workers: 4
+seed: 1000
 
-output:
-  dir: outputs/train/smolvla_massage
-  job_name: smolvla_massage_v1
+# ─── 日志与保存 ───
+log_freq: 200
+save_freq: 10000
+eval_freq: 20000
+save_checkpoint: true
+resume: false
+
+# ─── 输出 ───
+output_dir: outputs/train/smolvla_massage
+job_name: smolvla_massage_v1
+
+# ─── WandB (可选) ───
+wandb:
+  enable: false
+  project: lerobot
+
+# ─── LeRobot 格式 ───
+rename_map: {}

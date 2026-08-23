@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from lerobot_robot_massage.zdt.config import INIT_POSE_DEG, ZdtConfig
+from lerobot_robot_massage.zdt.config import JOINT_INIT_ANGLE_DEG, ZdtConfig
 from lerobot_robot_massage.zdt.controller import ZdtController
 from lerobot_robot_massage.zdt.zdt_driver import ZdtDriverError
 
@@ -69,7 +69,7 @@ def main() -> None:
         elif args.cmd == "reset":
             ctrl.soft_reset()
             ctrl.tick()
-            print(f"[reset] soft_reset → {INIT_POSE_DEG}")
+            print(f"[reset] soft_reset → {JOINT_INIT_ANGLE_DEG}")
         elif args.cmd == "torque":
             ctrl.set_torque(bool(args.state))
             ctrl.tick()

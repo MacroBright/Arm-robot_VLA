@@ -49,8 +49,11 @@ class MassageRobot(Robot):
             # PC 直连 CAN (ZDT 驱动器), 不再经由 STM32 网关
             from .zdt.config import ZdtConfig
             from .zdt.controller import ZdtController
-            self._protocol = ZdtController(ZdtConfig(
-                channel=config.channel, bitrate=config.can_bitrate))
+            zdt_cfg = ZdtConfig(
+                channel=config.channel, bitrate=config.can_bitrate)
+            if config.reduction_ratios:
+                zdt_cfg.reduction_ratios = list(config.reduction_ratios)
+            self._protocol = ZdtController(zdt_cfg)
         else:
             self._protocol = SerialProtocol(
                 port=config.port,
@@ -77,6 +80,23 @@ class MassageRobot(Robot):
         # Calibration: if not calibrated, zero the current position
         if calibrate and not self.is_calibrated:
             self.calibrate()
+
+        # 推理/评估部署: 连接后自动到按摩准备姿态 (SmolVLA episode 起点目标).
+        if self.config.move_to_ready_on_connect:
+            self.reset()
+
+    def reset(self) -> None:
+        """运动到按摩准备姿态 (READY_POSE_DEG) — episode 边界钩子.
+
+        LeRobot record/eval 的环境重置语义 (0.4.4 仅对 unitree_g1 调用,
+        自研采集脚本应显式调用). CAN 直连: 6 轴同步慢速 + 0x36 真实位置限位;
+        serial 链路无笛卡尔/多机同步能力, 记日志跳过.
+        """
+        if self.config.transport != "can":
+            logger.info("reset(): transport=%s 不支持自动 ready, 跳过", self.config.transport)
+            return
+        targets = self._protocol.ready()
+        logger.info("reset() → 按摩准备姿态 %s", targets)
 
     def disconnect(self) -> None:
         """Release all hardware resources."""
@@ -205,7 +225,12 @@ class MassageRobot(Robot):
         angles = [
             max(-180.0, min(180.0, goal[name])) for name in self.config.joint_names
         ]
-        self._protocol.set_joints(angles)
+        if self.config.transport == "can":
+            # CAN 直连: 用 0x36 真实位置做软限位 + 相对运动 (开机姿态锚定体系).
+            # calib (k,b) 由 controller 的 config.calib 默认提供 (与 anchor 一致).
+            self._protocol.set_joints_safe(angles, use_kb=True)
+        else:
+            self._protocol.set_joints(angles)
 
         return {
             f"{name}.pos": angles[i]

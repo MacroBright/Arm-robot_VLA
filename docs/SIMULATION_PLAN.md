@@ -64,8 +64,8 @@ const float D_H[6][4] = {{a, alpha, d, theta_offset}}:
 Joint 1 (shoulder_pan):  a=0,      alpha=0,       d=0,       theta=+pi/2
 Joint 2 (shoulder_lift): a=0,      alpha=pi/2,    d=0,       theta=+pi/2
 Joint 3 (elbow_flex):    a=200.0,  alpha=pi,      d=0,       theta=-pi/2
-Joint 4 (wrist_flex):    a=47.63,  alpha=-pi/2,   d=-184.5,  theta=0
-Joint 5 (wrist_roll):    a=0,      alpha=pi/2,    d=0,       theta=+pi/2
+Joint 4 (wrist_roll):    a=47.63,  alpha=-pi/2,   d=-184.5,  theta=0
+Joint 5 (wrist_flex):    a=0,      alpha=pi/2,    d=0,       theta=+pi/2
 Joint 6 (gripper):       a=0,      alpha=pi/2,    d=0,       theta=0
 ```
 
@@ -77,8 +77,8 @@ Joint 6 (gripper):       a=0,      alpha=pi/2,    d=0,       theta=0
 {90,   CCW, 50.00, ...  0,   360},  // J1: shoulder_pan
 {90,   CW,  50.89, ... 90,   180},  // J2: shoulder_lift
 {-90,  CW,  50.89, ... -90,   90},  // J3: elbow_flex
-{0,    CW,  51.00, ... -90,   90},  // J4: wrist_flex
-{90,   CCW, 26.85, ...  0,    90},  // J5: wrist_roll
+{0,    CW,  51.00, ... -90,   90},  // J4: wrist_roll
+{90,   CCW, 26.85, ...  0,    90},  // J5: wrist_flex
 {0,    CW,  51.00, ...  0,   360},  // J6: gripper
 ```
 

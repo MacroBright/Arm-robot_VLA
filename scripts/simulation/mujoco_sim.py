@@ -41,10 +41,10 @@ from remote_semantics import parse_remote_event
 
 # ── 常量: 与固件参数对齐 ──────────────────────────────────────────────
 NUM_JOINTS = 6
-JOINT_NAMES_SIM = ["J1_base", "J2_shoulder", "J3_elbow", "J4_wrist_flex",
-                   "J5_wrist_roll", "J6_gripper"]
-# 初始姿态: 各关节中位值 (J2:45 J3:90 J4:90 J5:0 J6:0)
-INIT_POSE_DEG = [90.0, 45.0, 90.0, 90.0, 0.0, 0.0]
+JOINT_NAMES_SIM = ["J1_base", "J2_shoulder", "J3_elbow", "J4_wrist_roll",
+                   "J5_wrist_flex", "J6_gripper"]
+# 初始姿态: 与固件权威 JOINT_INIT_ANGLE_DEG 一致 (zdt/config.py; 旧假值 J2=45° 已废)
+INIT_POSE_DEG = [90.0, 90.0, -90.0, 0.0, 90.0, 0.0]
 INIT_POSE_RAD = [math.radians(a) for a in INIT_POSE_DEG]
 
 STEP_HZ = 50                      # 物理步进频率

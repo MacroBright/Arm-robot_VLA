@@ -4,8 +4,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lerobot_robot_massage.zdt.frames import (
-    CanFrame, add_checksum, decode_pos3, decode_vel2, encode_frame,
-    encode_pos3, encode_vel2, parse_frame, payload_chunks, verify_checksum,
+    CanFrame, add_checksum, decode_pos3, decode_pos4, decode_vel2,
+    encode_frame, encode_pos3, encode_pos4, encode_vel2, parse_frame,
+    payload_chunks, verify_checksum,
 )
 
 
@@ -68,6 +69,34 @@ def test_pos_negative_roundtrip_same_convention():
     # 同一约定下 (不传 sign, 从 data3[0] 最高位推导) 负数必须互逆
     for deg in (-360.0, -90.0, -45.0, -7.5):
         assert abs(decode_pos3(encode_pos3(deg)) - deg) < 0.001, f"deg={deg}"
+
+
+# ── Emm42 V5.0 0x36 4字节解码测试 ──────────────────────────
+
+def test_pos4_roundtrip():
+    """decode_pos4(encode_pos4(deg), sign=1) ≈ deg (正角度)."""
+    for deg in (0.0, 0.0494, 90.0, 180.0, 360.0):
+        raw = encode_pos4(deg)
+        assert len(raw) == 4
+        assert abs(decode_pos4(raw, 1) - deg) < 0.01, f"deg={deg}"
+
+
+def test_pos4_negative():
+    """负角度: sign=-1 还原."""
+    raw = encode_pos4(45.0)
+    assert abs(decode_pos4(raw, -1) - (-45.0)) < 0.01
+
+
+def test_pos4_small_angle():
+    """真机 J5 证据: pos=9 → 9×360/65536 = 0.0494°."""
+    raw = bytes([0x00, 0x00, 0x00, 0x09])
+    assert abs(decode_pos4(raw, 1) - 0.0494) < 0.001
+
+
+def test_pos4_90deg_bytes():
+    """90° → 16384 = 0x00004000 → [0x00,0x00,0x40,0x00]."""
+    raw = encode_pos4(90.0)
+    assert raw == bytes([0x00, 0x00, 0x40, 0x00])
 
 
 def test_vel_roundtrip():

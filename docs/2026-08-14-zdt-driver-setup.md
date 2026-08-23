@@ -127,8 +127,8 @@
 | J1 shoulder_pan | 0 ~ 360 | 底座旋转 |
 | J2 shoulder_lift | 90 ~ 180 | 肩部抬升 |
 | J3 elbow_flex | -90 ~ 90 | 肘部 |
-| J4 wrist_flex | -90 ~ 90 | 末端旋转（真机实测） |
-| J5 wrist_roll | 0 ~ 90 | 末端上下（真机实测） |
+| J4 wrist_roll | -90 ~ 90 | 末端旋转（真机实测） |
+| J5 wrist_flex | 0 ~ 90 | 末端上下（真机实测） |
 | J6 gripper | 0 ~ 360 | 末端旋转（真机实测） |
 
 ### 5.2 真机实测标定（建议做）

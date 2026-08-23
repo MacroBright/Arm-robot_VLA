@@ -114,8 +114,8 @@ can.txData[0] = cmd[1];                                            // cmd[1]=功
 | 1 | shoulder_pan | 0~360 | 02 | 0x0200 |
 | 2 | shoulder_lift | 90~180 | 03 | 0x0300 |
 | 3 | elbow_flex | -90~90 | 04 | 0x0400 |
-| 4 | wrist_flex | -90~90 | 05 | 0x0500 |
-| 5 | wrist_roll | 0~90 | 06 | 0x0600 |
+| 4 | wrist_roll | -90~90 | 05 | 0x0500 |
+| 5 | wrist_flex | 0~90 | 06 | 0x0600 |
 | 6 | gripper | 0~360 | 07 | 0x0700 |
 
 > J4/J5/J6 物理行为以真机实测为准（SERIAL_COMMANDS.md 2026-08-11 标注：J4 末端旋转、J5 末端上下、J6 末端旋转）。

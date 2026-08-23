@@ -147,7 +147,7 @@ python scripts/control/joystick_control.py --port COM5 --camera 1
 
 | 组件 | 规格 |
 |------|------|
-| 主控 | STM32F407VET6 (168MHz, FreeRTOS) |
+| 主控 | PC-UST-CAN-直连 |
 | 电机 | Emm_V5 CAN 步进闭环 ×6（CAN ID 2-7）|
 | 通信 | USART1 (PA9/PA10, 115200bps) |
 | 相机 | USB 640×480@30fps |

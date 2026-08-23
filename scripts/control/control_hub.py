@@ -41,7 +41,7 @@ FRAME_HEIGHT = 480
 
 JOINT_NAMES = [
     "shoulder_pan", "shoulder_lift", "elbow_flex",
-    "wrist_flex", "wrist_roll", "gripper",
+    "wrist_roll", "wrist_flex", "gripper",
 ]
 
 # ── Hub 窗口布局 ──

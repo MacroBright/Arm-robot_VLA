@@ -193,7 +193,7 @@ datasets/sim_v1/
     "frames": 600,
     "fps_target": 30,
     "joint_names": ["shoulder_pan","shoulder_lift","elbow_flex",
-                    "wrist_flex","wrist_roll","gripper"],
+                    "wrist_roll","wrist_flex","gripper"],
     "frame_width": 640,
     "frame_height": 480,
     "recorded_at": "2026-07-22T10:30:00"
@@ -247,8 +247,8 @@ datasets/sim_v1/
 | J1 | shoulder_pan | 0° ~ 360° | 2 |
 | J2 | shoulder_lift | 90° ~ 180° | 3 |
 | J3 | elbow_flex | -90° ~ 90° | 4 |
-| J4 | wrist_flex | -90° ~ 90° | 5 |
-| J5 | wrist_roll | 0° ~ 90° | 6 |
+| J4 | wrist_roll | -90° ~ 90° | 5 |
+| J5 | wrist_flex | 0° ~ 90° | 6 |
 | J6 | gripper | 0° ~ 360° | 7 |
 
 ### 6.2 初始姿态 (soft_reset)

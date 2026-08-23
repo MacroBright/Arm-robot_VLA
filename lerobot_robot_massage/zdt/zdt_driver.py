@@ -8,9 +8,11 @@ import time
 from typing import Callable, Optional
 
 from .can_transport import CanTransport, CanTransportError
-from .config import CHECKSUM, F_ENABLE, F_POS, F_READ_CUR, F_READ_POS, F_STOP, F_VEL
+from .config import (
+    CHECKSUM, F_ENABLE, F_LEGACY_POS, F_READ_CUR, F_READ_POS, F_STOP, F_VEL,
+)
 from .frames import (
-    add_checksum, decode_pos3, encode_frame, encode_pos3, encode_vel2,
+    add_checksum, decode_pos4, encode_frame, encode_pulse4, encode_vel2,
     parse_frame, verify_checksum,
 )
 
@@ -69,45 +71,79 @@ class ZdtDriver:
         body = bytes([F_STOP, 0x98, 0x00])
         self._request(0x00, body, expect_response=False)
 
-    def move_abs(self, addr: int, pos_deg: float, speed_rpm: float) -> None:
-        """直通限速位置, 绝对. 位置(°)×10, 速度(RPM)×10.
+    def move_pulse(self, addr: int, n_pulses: int, dir_cw: bool,
+                   speed_rpm: float, acc: int = 20,
+                   snF: bool = False) -> None:
+        """固件 Emm_V5_Pos_Control 兼容位置命令 (0xFD 脉冲计数).
 
-        ZDT 文档布局 速度在前: FB 01 + 速度2B + 位置3B + 0A 00
-        (首帧 data[4:7]=位置3B; bring-up candump 核实, spec §9).
+        2026-08 真机验证: 0xFB 直通限速命令本代驱动器不识别 (无任何响应),
+        0xFD 脉冲命令正常执行. 布局:
+          数据 = [FD, dir(0=CW/1=CCW), 速度RPM, acc, 脉冲4B, raF=0相对, snF, 6B]
+        共 12B → 拆 2 帧 (8B + 4B), 帧 ID=(addr<<8)|seq.
+
+        snF=多机同步标志: True 时电机收到命令但暂不运动, 等 multi_sync()
+        广播 (00 FF 66 6B) 触发后才与其余 snF=1 电机同步启动.
         """
-        body = (bytes([F_POS, 0x01]) + encode_vel2(speed_rpm)
-                + encode_pos3(pos_deg) + b"\x0a\x00")
+        d = 0 if dir_cw else 1
+        # 0xFD 速度字段 = RPM 直传 (手册 0x05DC=1500RPM); 修复旧 ×10 bug.
+        vel = int(max(1, round(abs(speed_rpm)))) & 0xFFFF
+        body = (bytes([F_LEGACY_POS, d, (vel >> 8) & 0xFF, vel & 0xFF, acc])
+                + encode_pulse4(n_pulses) + b"\x00\x00")  # raF=0 相对, snF 末字节覆写
+        if snF:
+            body = body[:-1] + b"\x01"                     # 末字节 0x00→0x01 启用同步
         self._request(addr, body, expect_response=False)
 
-    def move_rel(self, addr: int, delta_deg: float, speed_rpm: float) -> None:
-        """直通限速位置, 相对."""
-        body = (bytes([F_POS, 0x00]) + encode_vel2(speed_rpm)
-                + encode_pos3(delta_deg) + b"\x0a\x00")
-        self._request(addr, body, expect_response=False)
+    def multi_sync(self) -> None:
+        """广播多机同步运动 (00 FF 66 6B): 触发所有已带 snF=1 的 0xFD 命令同步启动.
+
+        说明书 §多机通讯及同步控制: 先对各电机发 0xFD(snF=1), 再发本广播,
+        收到广播后全部电机同时开始运动.
+        """
+        body = bytes([0xFF, 0x66, CHECKSUM])
+        self._request(0x00, body, expect_response=False)
 
     def set_vel(self, addr: int, rpm: float, slope: float = 0.0) -> None:
-        """速度模式. 斜率/速度均 ×10."""
+        """速度模式. 斜率/速度字段 = RPM 直传 (手册 0xF6 0x05DC=1500RPM)."""
         body = (bytes([F_VEL, 0x00]) + encode_vel2(slope)
                 + encode_vel2(rpm) + b"\x00")
         self._request(addr, body, expect_response=False)
 
     def set_zero(self, addr: int) -> None:
-        """设单圈零点 (0x93 88 01, 存储)."""
+        """设单圈零点 (0x93 88 01, 存储).
+
+        ⚠ 这是"单圈回零零点设置", 不是"清零当前位置". 设完后触发 home(0x9A)
+        会回到这个位置, 但 0x36 当前读数不变. 要让 0x36 立刻读出 0 用 reset_position.
+        """
         body = bytes([0x93, 0x88, 0x01])
         self._request(addr, body, expect_response=False)
 
+    def reset_position(self, addr: int) -> None:
+        """清零当前位置 (0x0A 6D): 让 0x36 立刻读出 0.
+
+        固件 robot.c:231/242 + robot_cmd.c:131 已验证可用的标定路线.
+        与 set_zero(0x93) 的区别: 0x0A 6D 改变 0x36 当前读数, 但不影响回零目标;
+        0x93 88 01 设回零目标但不改变 0x36 当前读数.
+        A 任务标定方案 b (人工摆姿态→清零→此后 0x36 读相对偏移) 用本方法.
+        """
+        body = bytes([0x0A, 0x6D])
+        self._request(addr, body, expect_response=False)
+
     def home(self, addr: int) -> None:
-        """触发回零 (0x9A 00 00)."""
+        """触发回零 (0x9A 00 00, 单圈就近模式)."""
         body = bytes([0x9A, 0x00, 0x00])
         self._request(addr, body, expect_response=False)
 
     # ── 读命令 (期待回帧) ─────────────────────────────────
 
     def read_pos(self, addr: int) -> float:
-        """读实时位置 (度). 回帧 [36, 符号, 位置×10 3B, 6B]."""
+        """读实时位置 (度). Emm42 V5.0 回帧 [36, 符号, 位置4B, 6B].
+
+        符号字节: 0x00=正, 0x01=负 (说明书 §7.4.4 + 固件 robot.c:1045 实测确认).
+        位置字段4字节, 值×360/65536 = 电机轴角度 (说明书 §0x36 + 固件一致).
+        """
         data = self._request(addr, bytes([F_READ_POS]), expect_response=True)
-        sign = -1 if data[1] == 0x80 else 1
-        return decode_pos3(data[2:5], sign)
+        sign = -1 if data[1] == 0x01 else 1
+        return decode_pos4(data[2:6], sign)
 
     def read_current(self, addr: int) -> float:
         """读相电流 (mA). 回帧 [27, mA高, mA低, 6B] — bring-up 核实布局."""

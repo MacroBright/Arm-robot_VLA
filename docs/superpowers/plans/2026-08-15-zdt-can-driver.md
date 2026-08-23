@@ -151,8 +151,8 @@ DEFAULT_LIMITS: list[tuple[float, float]] = [
     (0.0, 360.0),    # J1 shoulder_pan
     (90.0, 180.0),   # J2 shoulder_lift
     (-90.0, 90.0),   # J3 elbow_flex
-    (-90.0, 90.0),   # J4 wrist_flex
-    (0.0, 90.0),     # J5 wrist_roll
+    (-90.0, 90.0),   # J4 wrist_roll
+    (0.0, 90.0),     # J5 wrist_flex
     (0.0, 360.0),    # J6 gripper
 ]
 

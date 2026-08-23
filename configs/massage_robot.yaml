@@ -10,8 +10,8 @@ joint_names:
   - shoulder_pan    # Joint 1 — base rotation
   - shoulder_lift   # Joint 2 — shoulder lift
   - elbow_flex      # Joint 3 — elbow
-  - wrist_flex      # Joint 4 — wrist flex
-  - wrist_roll      # Joint 5 — wrist roll
+  - wrist_roll      # Joint 4 — wrist roll (腕翻转)
+  - wrist_flex      # Joint 5 — wrist flex (腕俯仰)
   - gripper         # Joint 6 — gripper/end-effector
 
 # Camera configuration

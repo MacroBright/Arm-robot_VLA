@@ -613,7 +613,7 @@ def record_episode(port: str, camera_index: int,
         "frames": frame_count,
         "joint_names": [
             "shoulder_pan", "shoulder_lift", "elbow_flex",
-            "wrist_flex", "wrist_roll", "gripper"
+            "wrist_roll", "wrist_flex", "gripper"
         ],
         "fps": fps,
     }

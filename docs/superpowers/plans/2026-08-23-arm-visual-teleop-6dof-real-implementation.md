@@ -129,15 +129,6 @@ def test_rotmat_to_quat_unit_norm_robust():
         assert abs(np.linalg.norm(q) - 1.0) < 1e-9, f"axis={axis} q={q}"
 
 
-def test_ee_pose_rotation_vector_roundtrip():
-    # 小角: to_rotation_vector ≈ 轴角; log_so3(exp(w)) 由 Task 2 全测, 这里只验存在性
-    R = _rotz(15.0)
-    p = EEPose(position=np.zeros(3), rotation=R)
-    w = p.to_rotation_vector()
-    assert w.shape == (3,)
-    assert float(np.linalg.norm(w)) > 1e-6
-
-
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
@@ -323,6 +314,15 @@ def test_log_so3_exact_pi_roundtrip():
         R = _exp_so3(u * math.pi)
         back = _exp_so3(log_so3(R))
         assert np.abs(back - R).max() < 1e-6, f"axis={u} err={np.abs(back-R).max()}"
+
+
+def test_ee_pose_to_rotation_vector_matches_log_so3():
+    # 修订 #2 链路: types.EEPose.to_rotation_vector == kinematics.log_so3
+    # (该方法在 Task 1 定义但依赖本任务的 log_so3, 故测试放这里)
+    from lerobot_robot_massage.zdt.types import EEPose
+    w0 = np.array([0.3, -0.2, 0.5])
+    p = EEPose(position=np.zeros(3), rotation=_exp_so3(w0))
+    np.testing.assert_allclose(p.to_rotation_vector(), w0, atol=1e-9)
 
 
 def test_singularity_metrics_unit_independent():
@@ -1846,7 +1846,8 @@ def test_step_near_singular_scales_twist():
 
 def test_step_pose_reaches_target():
     """step_pose: SE(3) 误差 → 位置+姿态环 → step. 姿态误差经 log_so3 (无 Euler 累加)."""
-    ctrl, t, cart = _ready_cart()
+    clock = FakeClock()
+    ctrl, t, cart = _ready_cart(clock=clock)
     q = list(READY_ANCHOR)
     for _ in range(3):
         _inject_anchor_pose(t, q, n=3)
@@ -1855,6 +1856,7 @@ def test_step_pose_reaches_target():
         res = cart.step_pose(p_des, T[:3, :3])
         assert res["moved"] is True
         q = list(ctrl._tracked_angles)
+        clock.tick(0.05)
     ee = fk_mdh(anchor_to_source(q))[:3, 3]
     assert ee[0] > T[:3, 3][0] + 1.0        # 沿 +x 移动
 
@@ -2244,7 +2246,8 @@ def test_sim_adapter_joint_state():
 
 def test_real_adapter_move_cartesian_sends_fd():
     adapter, t, clock = _real_adapter()
-    _inject_anchor_pose(t, READY_ANCHOR)
+    for _ in range(3):                     # step: FK + check_limits + set_joints_safe
+        _inject_anchor_pose(t, READY_ANCHOR)
     clock.tick(0.05)
     adapter.move_cartesian_velocity(
         CartesianCommand((10.0, 0.0, 0.0), (0.0, 0.0, 0.0), timestamp=clock.t))
@@ -3332,7 +3335,11 @@ def test_sim_regression_full_stack():
     rec.start_episode()
     adapter.connect()
 
-    teleop = RealArmTeleop(adapter, wd, rec, hand_provider=lambda: None,
+    # 手始终在 → watchdog 保持 OK, 30 帧全部运动 (位移确定)
+    present_hand = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
+                    "wrist_mm": (0.0, 0.0, 100.0)}
+    teleop = RealArmTeleop(adapter, wd, rec,
+                           hand_provider=lambda: dict(present_hand),
                            key_provider=lambda: None)
     teleop._build_command = lambda h, ts: CartesianCommand(
         (5.0, 0.0, 0.0), timestamp=ts)                  # 固定 +x 命令
@@ -3341,8 +3348,8 @@ def test_sim_regression_full_stack():
     for i in range(30):
         teleop.run_once(cmd_ts=0.0 + i * 0.02, now=0.0 + i * 0.02)
     x1 = fk_mdh(np.array(server.q))[0, 3]
-    # 30 帧 × 5mm/s × 0.02s = 3mm (+x 净位移)
-    assert x1 - x0 > 1.0, f"仿真闭环位移过小: {x1 - x0:.2f}mm"
+    # 30 帧 × 5mm/s × 0.02s = 3mm (+x 净位移, FK 积分误差容忍)
+    assert x1 - x0 > 2.0, f"仿真闭环位移过小: {x1 - x0:.2f}mm"
     stats = rec.finish_episode()
     assert stats["records"] == 30
     adapter.disconnect()

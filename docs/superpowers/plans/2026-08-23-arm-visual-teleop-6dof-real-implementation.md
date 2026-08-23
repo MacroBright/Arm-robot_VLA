@@ -20,6 +20,7 @@
 - **CartesianController 是唯一笛卡尔运动入口**：adapter/遥操不得绕过它直接发 joint/CAN 命令；`RealArmAdapter` 不实现 CAN 协议、不重复 IK、不直接操作电机帧。
 - **reset()/ready() 是实际运动操作**：必须显式 ARM（状态机 ARMED）后才可调用，**绝不**作为 `connect()` 的隐式路径或 LeRobot 生命周期自动动作；`MassageRobot.reset()` 需 `config.gravity_confirm=True` 显式确认才允许自动 ready（见 Task 5d 调用方适配）。Episode 纯软件复位（不改关节）应走独立路径，不得复用 `reset()`。
 - 任务 T5 按评审拆分为 **T5a~T5d**（driver/scan → controller 生命周期 → get_real_state → 调用方适配），依赖顺序不变，每个子任务独立测试 + 独立 commit。
+- **测试命令统一用 `conda run -n leap_hand python -m pytest <文件> -q`**（spec §8 基线命令；`leap_hand` 为 Python 3.14）。⚠ `zdt/types.py` 与标准库 `types` 同名：`python lerobot_robot_massage/zdt/test_types.py` 直跑时脚本目录 zdt/ 在 sys.path 上会遮蔽 stdlib `types`（3.14 下 dataclasses→re→enum→types 链崩）；**必须用 pytest**（rootdir 不把 zdt/ 放进 sys.path）。生产包导入（`from lerobot_robot_massage.zdt.types import ...`）无此问题。
 - 单位：角度 deg、长度 mm、角速度 rad/s、时间戳/期限一律 `time.monotonic()` 秒。
 - **现有 171 测试终态全绿**。以下是有意行为变化，对应测试在所属任务内同步更新并随提交保持绿：
   1. `connect()` 不再 `set_torque(True)`（改由 `arm()` 使能扭矩）；
@@ -155,7 +156,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `python Arm-robot_VLA/lerobot_robot_massage/zdt/test_types.py`
+Run: `cd Arm-robot_VLA && conda run -n leap_hand python -m pytest lerobot_robot_massage/zdt/test_types.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'lerobot_robot_massage.zdt.types'`
 
 - [ ] **Step 3: 写实现**
@@ -242,7 +243,7 @@ def rotmat_to_quat(R) -> Tuple[float, float, float, float]:
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `python Arm-robot_VLA/lerobot_robot_massage/zdt/test_types.py`
+Run: `cd Arm-robot_VLA && conda run -n leap_hand python -m pytest lerobot_robot_massage/zdt/test_types.py -q`
 Expected: PASS (ALL PASS)
 
 - [ ] **Step 5: 提交**

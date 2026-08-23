@@ -18,6 +18,8 @@
 - **陈旧命令看门狗最终归控制层**：`step(cmd_ts=...)` 用单调期限判定陈旧（`now - cmd_ts > stale_cmd_max_s` → 拒动），视觉层 VisionWatchdog 只做视觉信号分级。
 - **枚举硬不变式**：`connect()` 扫描后必须 6 轴全在线 + 关节槽一一映射；任一缺失/重复/未映射/越界 → `robot.fault(reason)` 闩锁 FAULT 并抛 `SafetyError`，**禁止 ARM**。
 - **CartesianController 是唯一笛卡尔运动入口**：adapter/遥操不得绕过它直接发 joint/CAN 命令；`RealArmAdapter` 不实现 CAN 协议、不重复 IK、不直接操作电机帧。
+- **reset()/ready() 是实际运动操作**：必须显式 ARM（状态机 ARMED）后才可调用，**绝不**作为 `connect()` 的隐式路径或 LeRobot 生命周期自动动作；`MassageRobot.reset()` 需 `config.gravity_confirm=True` 显式确认才允许自动 ready（见 Task 5d 调用方适配）。Episode 纯软件复位（不改关节）应走独立路径，不得复用 `reset()`。
+- 任务 T5 按评审拆分为 **T5a~T5d**（driver/scan → controller 生命周期 → get_real_state → 调用方适配），依赖顺序不变，每个子任务独立测试 + 独立 commit。
 - 单位：角度 deg、长度 mm、角速度 rad/s、时间戳/期限一律 `time.monotonic()` 秒。
 - **现有 171 测试终态全绿**。以下是有意行为变化，对应测试在所属任务内同步更新并随提交保持绿：
   1. `connect()` 不再 `set_torque(True)`（改由 `arm()` 使能扭矩）；
@@ -41,10 +43,12 @@
 
 ```
 types(T1) → kinematics(T2) → workspace(T3) → safety/state-machine(T4)
-→ controller(T5 生命周期/scan + T6 笛卡尔) → adapter(T7) → watchdog(T8)
-→ recording(T9) → real_arm_teleop(T10) → simulation regression(T11)
-→ 文档收尾 + 上游 Plan 标记(T12)
+→ controller: T5a(driver/scan) → T5b(生命周期) → T5c(get_real_state) → T5d(调用方)
+→ CartesianController(T6) → adapter(T7) → watchdog(T8) → recording(T9)
+→ real_arm_teleop(T10) → simulation regression(T11) → 文档收尾 + 上游 Plan 标记(T12)
 ```
+
+> T5 按评审拆为 T5a~T5d：每个子任务独立测试 + 独立 commit + 独立评审，顺序不变。
 
 ---
 
@@ -57,7 +61,7 @@ types(T1) → kinematics(T2) → workspace(T3) → safety/state-machine(T4)
 **Interfaces:**
 - Produces:
   - `CartesianCommand(linear_velocity: tuple[float,float,float], angular_velocity: tuple[float,float,float] = (0.,0.,0.), timestamp: float = 0.0)` — frozen dataclass；`.twist -> np.ndarray(6)`
-  - `JointState(q: tuple[float,...], dq: tuple[float,...] = (0.,)*6, current_ma: tuple[float,...] = (), flags: int = 0, status: str = "")`
+  - `JointState(q: tuple[float,...], dq: tuple[float,...] = (0.,)*6, current_ma: tuple[float,...] = (), flags: tuple[int, ...] = (), status: str = "")`
   - `EEPose(position: np.ndarray, rotation: np.ndarray)` — `position` (3,) mm，`rotation` (3,3) **SO(3)**；`.to_quaternion() -> tuple[w,x,y,z]`；`.to_rotation_vector() -> np.ndarray(3)`
   - `rotmat_to_quat(R) -> tuple[float,float,float,float]`（Shepperd 稳健法，wxyz）
 
@@ -102,7 +106,14 @@ def test_cartesian_command_immutable():
 def test_joint_state_defaults():
     js = JointState(q=(0.0,) * 6)
     assert len(js.dq) == 6
-    assert js.flags == 0 and js.status == ""
+    assert js.flags == () and js.status == ""
+
+
+def test_joint_state_flags_six_axis():
+    # 6 轴 flags 全量保存 (P2-⑨): 任一轴堵转/失使能在 observation 可见
+    js = JointState(q=(0.0,) * 6, flags=(1, 2, 4, 8, 0, 1))
+    assert len(js.flags) == 6
+    assert js.flags[2] == 4        # J3 堵转标志可见
 
 
 def test_ee_pose_identity_quaternion():
@@ -181,11 +192,11 @@ class CartesianCommand:
 
 @dataclass(frozen=True)
 class JointState:
-    """6 轴输出轴真实角 (anchor 帧, deg) + 滤波速度 + 电流."""
+    """6 轴输出轴真实角 (anchor 帧, deg) + 滤波速度 + 电流 + 全轴 flags."""
     q: Tuple[float, float, float, float, float, float]
     dq: Tuple[float, float, float, float, float, float] = (0.0,) * 6
     current_ma: Tuple[float, ...] = ()
-    flags: int = 0
+    flags: Tuple[int, ...] = ()          # 6 轴完整状态位 (P2-⑨): 任一轴堵转/失能可见
     status: str = ""
 
 
@@ -326,13 +337,14 @@ def test_ee_pose_to_rotation_vector_matches_log_so3():
 
 
 def test_singularity_metrics_unit_independent():
-    # 修订 #1: 位置列整体缩放 (改变单位) 不改变条件数
+    # 修订 #1: 平移单位变化 (mm→cm: J[:, :3] *= 0.01) 不改变归一化后条件数
     from lerobot_robot_massage.zdt.kinematics import jacobian
     q = [90.0, 135.0, 315.0, 0.0, 255.0, 0.0]
     J = jacobian(q)
     m1 = singularity_metrics(J)
-    scale = np.diag([2.5, 2.5, 2.5, 1.0, 1.0, 1.0])
-    m2 = singularity_metrics(J @ scale)
+    J2 = J.copy()
+    J2[:, :3] *= 0.01                     # 真正的平移单位换算 (P1-④)
+    m2 = singularity_metrics(J2)
     assert abs(m1["condition_number"] - m2["condition_number"]) < 1e-6
     assert m1["sigma_min"] <= m1["sigma_max"] + 1e-12
 
@@ -1069,7 +1081,9 @@ git -C Arm-robot_VLA commit -m "feat(zdt): RobotStateMachine 整臂门禁 + 枚�
 
 ---
 
-## Task 5: 控制器生命周期 — scan_via_driver + connect/arm/disarm/get_real_state + 调用方适配
+## Task 5: 控制器生命周期（拆 T5a~T5d）— driver/scan → 生命周期 → get_real_state → 调用方
+
+> 按评审拆分：每个子任务独立测试 + 独立 commit + 独立评审，顺序不变（T4 → T5a → T5b → T5c → T5d → T6）。
 
 **Files:**
 - Modify: `Arm-robot_VLA/lerobot_robot_massage/zdt/zdt_driver.py`（`read_version`、`_request`/`_recv_for` 超时覆盖）
@@ -1086,6 +1100,8 @@ git -C Arm-robot_VLA commit -m "feat(zdt): RobotStateMachine 整臂门禁 + 枚�
   - `scan.scan_via_driver(driver, id_range=None, timeout_s=None, retries=None) -> ScanResult`
   - `ZdtController.connect() / arm(gravity_confirmed=False) / disarm() / enter_teleop() / exit_teleop() / fault(reason) / re_arm(confirmed=False) / get_real_state() -> dict`；`self.robot: RobotStateMachine`
   - ZdtConfig 新字段：`max_vel_mm_s=20.0, max_ang_rad_s=1.0, max_joint_vel_deg_s=60.0, max_joint_acc_deg_s2=200.0, joint_limit_margin_deg=2.0, kp_pos=2.0, kr_ori=2.0, ik_near_ratio=0.3, ik_sing_ratio=0.1, workspace_min=None, workspace_max=None, dt_min_factor=0.5, dt_max_factor=3.0, stale_cmd_max_s=0.25, vel_filter_alpha=0.2`
+
+### T5a: ZdtDriver.read_version + scan.scan_via_driver
 
 - [ ] **Step 1: 写失败测试（driver.read_version + scan.scan_via_driver）**
 
@@ -1247,6 +1263,8 @@ git add Arm-robot_VLA/lerobot_robot_massage/zdt/zdt_driver.py Arm-robot_VLA/lero
 git -C Arm-robot_VLA commit -m "feat(zdt): read_version + scan_via_driver (connect 枚举用, 免 ZdtBus)"
 ```
 
+### T5b: ZdtController 生命周期（connect/arm/disarm/teleop/e_stop 门禁 + config 字段）
+
 - [ ] **Step 6: 写失败测试（controller 生命周期）**
 
 `config.py` 新增字段（先写，这是实现依赖）：
@@ -1356,23 +1374,6 @@ def test_disarm_disables_torque_and_returns_safe_idle():
     assert ctrl.robot.phase == RobotPhase.SAFE_IDLE
     assert any(f.data and f.data[0] == 0xF3 and len(f.data) > 2 and f.data[2] == 0x00
                for f in t.sent)
-
-
-def test_get_real_state_fields():
-    ctrl, t = _mk()
-    _mk_armed(ctrl)
-    # 注入顺序必须匹配读取顺序: 全 q (0x36) → 全 current (0x27) → 全 flags (0x3A)
-    for addr in ctrl.config.joint_addrs:
-        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
-    for addr in ctrl.config.joint_addrs:
-        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
-    for addr in ctrl.config.joint_addrs:
-        t.inject(addr, 0x3A, b"\x01\x6b")
-    st = ctrl.get_real_state()
-    assert set(st) == {"q", "velocity", "current", "flags", "status"}
-    assert len(st["q"]) == 6 and len(st["velocity"]) == 6
-    assert len(st["current"]) == 6 and len(st["flags"]) == 6
-    assert st["status"] == "ARMED"
 
 
 def test_connect_enumeration_failure_cleans_up():
@@ -1528,7 +1529,76 @@ from .scan import scan_via_driver
         logger.warning("EMERGENCY STOP broadcast")
 ```
 
-`get_real_state()`（放在 `get_state()` 之后）：
+> `get_real_state()` 的实现移到 T5c（见下），此处不重复。
+
+- [ ] **Step 9: 运行测试确认通过**
+
+Run: `python Arm-robot_VLA/lerobot_robot_massage/zdt/test_controller.py`
+Expected: PASS（旧 controller 测试 + 新增全部通过）
+
+- [ ] **Step 10: 提交（controller 生命周期）**
+
+```bash
+git add Arm-robot_VLA/lerobot_robot_massage/zdt/config.py Arm-robot_VLA/lerobot_robot_massage/zdt/controller.py Arm-robot_VLA/lerobot_robot_massage/zdt/test_controller.py
+git -C Arm-robot_VLA commit -m "feat(zdt): connect 走 scan/verify 硬不变式 + arm/disarm/teleop 门禁 (修订#6, connect 不再自动使能)"
+```
+
+### T5c: get_real_state（0x36 真实观测 + 滤波差分速度）
+
+- [ ] **Step 9c: 写失败测试（get_real_state）**
+
+在 `test_controller.py` 追加（复用 T5b 的 `_mk_armed`）：
+
+```python
+def test_get_real_state_fields():
+    ctrl, t = _mk()
+    _mk_armed(ctrl)
+    # 注入顺序必须匹配读取顺序: 全 q (0x36) → 全 current (0x27) → 全 flags (0x3A)
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x3A, b"\x01\x6b")
+    st = ctrl.get_real_state()
+    assert set(st) == {"q", "velocity", "current", "flags", "status"}
+    assert len(st["q"]) == 6 and len(st["velocity"]) == 6
+    assert len(st["current"]) == 6 and len(st["flags"]) == 6
+    assert st["status"] == "ARMED"
+
+
+def test_get_real_state_velocity_filters():
+    # 两次读取不同真实角 → 滤波有限差分 dq 非零
+    ctrl, t = _mk()
+    _mk_armed(ctrl)
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x3A, b"\x01\x6b")
+    st0 = ctrl.get_real_state()
+    assert all(v == 0.0 for v in st0["velocity"])   # 首帧无差分
+    # 第二帧: q 前进 1°
+    for addr, deg in zip(ctrl.config.joint_addrs, [1.0] * 6):
+        v = int(round(abs(deg) * 65536.0 / 360.0)) & 0xFFFFFFFF
+        t.inject(addr, F_READ_POS, bytes([0x00, (v >> 24) & 0xFF,
+                                          (v >> 16) & 0xFF, (v >> 8) & 0xFF,
+                                          v & 0xFF]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x3A, b"\x01\x6b")
+    st1 = ctrl.get_real_state()
+    assert any(abs(v) > 0.0 for v in st1["velocity"])   # 差分后非零
+```
+
+- [ ] **Step 10c: 运行确认失败**
+
+Run: `python Arm-robot_VLA/lerobot_robot_massage/zdt/test_controller.py`
+Expected: FAIL — `AttributeError: 'ZdtController' object has no attribute 'get_real_state'`
+
+- [ ] **Step 11c: 写实现（controller.py 追加 get_real_state）**
 
 ```python
     def get_real_state(self) -> dict:
@@ -1560,19 +1630,19 @@ from .scan import scan_via_driver
                 "flags": flags, "status": self.robot.phase.name}
 ```
 
-- [ ] **Step 9: 运行测试确认通过**
+- [ ] **Step 12c: 运行测试确认通过**
 
 Run: `python Arm-robot_VLA/lerobot_robot_massage/zdt/test_controller.py`
-Expected: PASS（旧 controller 测试 + 新增全部通过）
+Expected: PASS（T5b + T5c 全部通过）
 
-- [ ] **Step 10: 提交（controller 生命周期）**
+- [ ] **Step 13c: 提交（T5c）**
 
 ```bash
-git add Arm-robot_VLA/lerobot_robot_massage/zdt/config.py Arm-robot_VLA/lerobot_robot_massage/zdt/controller.py Arm-robot_VLA/lerobot_robot_massage/zdt/test_controller.py
-git -C Arm-robot_VLA commit -m "feat(zdt): connect 走 scan/verify 硬不变式 + arm/disarm/get_real_state (修订#6, connect 不再自动使能)"
+git add Arm-robot_VLA/lerobot_robot_massage/zdt/controller.py Arm-robot_VLA/lerobot_robot_massage/zdt/test_controller.py
+git -C Arm-robot_VLA commit -m "feat(zdt): get_real_state 0x36 真实观测 + 滤波差分速度 (T5c, spec §5.3)"
 ```
 
-- [ ] **Step 11: 调用方适配（spec §5.4）**
+### T5d: 调用方适配（spec §5.4）
 
 `scripts/control/cartesian_keyboard.py` 的 `_build_cartesian`：
 
@@ -1816,6 +1886,20 @@ def test_step_workspace_blocks_outside_box():
     assert res["moved"] is False and res["reason"] == "workspace_blocked"
 
 
+def test_scale_toward_limits_progressive():
+    """两层不变式 (评审 §六): 预测限位只渐进减速, 硬拒绝交给 check_limits_real."""
+    ctrl, t, cart = _ready_cart()
+    q_anchor = np.array([0.0, 148.0, 50.0, 0.0, 120.0, 0.0])   # J2 靠近上限 150
+    q_src = np.array(anchor_to_source(q_anchor))
+    dq = np.zeros(6)
+    dq[1] = math.radians(1.0)                     # 下一帧 J2=149, margin 内 → 渐进缩小
+    scaled = cart._scale_toward_limits(q_src, dq)
+    assert 0.0 < scaled[1] < dq[1]
+    dq[1] = math.radians(3.0)                     # 下一帧 J2=151 > 150 → 缩到 0
+    scaled2 = cart._scale_toward_limits(q_src, dq)
+    assert scaled2[1] == 0.0
+
+
 def test_step_singular_band_refuses_motion():
     """奇异度实际参与: 强制 sing_ratio 覆盖常态 → SINGULAR 拒动 (非仅 telemetry)."""
     ctrl, t, cart = _ready_cart()
@@ -1949,9 +2033,15 @@ Expected: FAIL — `cart.step(10,0,0)` 返回 `not_armed`；`FakeClock` 缺失�
         self._limiter = CartesianVelocityLimiter(self.max_vel_mm_s, workspace)
 ```
 
-（`from .workspace import BoxWorkspace, CartesianVelocityLimiter`、`from .safety import RobotPhase`、`from .kinematics import adaptive_damping, log_so3, singularity_metrics`、`import time` 加入顶部 import；删除 `self.dt_s`。）
+（`from .workspace import BoxWorkspace, CartesianVelocityLimiter`、`from .safety import RobotPhase`、`from .types import EEPose`、`from .kinematics import adaptive_damping, log_so3, singularity_metrics`、`import time` 加入顶部 import；删除 `self.dt_s`。）
 
-替换 `step()` 与 `_read_current_ee`，新增 `_read_current_pose`、`step_pose`、`_scale_toward_limits`、`_clamp_rpy_relative`、`_rotmat_to_rpy`、`_rpy_to_rotmat`：
+替换 `step()` 与 `_read_current_ee`，新增 `_measure_dt`、`_armed_or_error`、`get_current_pose`、`_step_from_state`、`step_pose`、`_scale_toward_limits`、`_clamp_rpy_relative`、`_rotmat_to_rpy`、`_rpy_to_rotmat`（`_read_current_ee` 删除，`get_ee_xyz` 改为经 `_read_current_pose` 取位置）：
+```python
+    def get_ee_xyz(self) -> list[float]:
+        """当前末端位置 (mm, 基座系) — 调试/显示用."""
+        p, _, _ = self._read_current_pose()
+        return p.tolist()
+```
 
 ```python
     def _read_current_pose(self) -> tuple[np.ndarray, np.ndarray, list[float]]:
@@ -1961,9 +2051,28 @@ Expected: FAIL — `cart.step(10,0,0)` 返回 `not_armed`；`FakeClock` 缺失�
         T = fk_mdh(q_src)
         return T[:3, 3].copy(), T[:3, :3].copy(), q_anchor
 
-    def _read_current_ee(self) -> tuple[np.ndarray, list[float]]:
-        p, _, q_anchor = self._read_current_pose()
-        return p, q_anchor
+    def _measure_dt(self) -> tuple[float, float]:
+        """测量单调 dt (修订 #7): 首帧 dt_default, 之后实测并钳到 [dt_min, dt_max]."""
+        now = self.clock()
+        if self._last_step_mono is None:
+            dt = self.dt_default_s
+        else:
+            dt = max(self.dt_min_s, min(self.dt_max_s, now - self._last_step_mono))
+        self._last_step_mono = now
+        return dt, now
+
+    def _armed_or_error(self) -> Optional[dict]:
+        """ARMED/TELEOP 门禁. 非门禁态返回错误 dict, 否则 None."""
+        phase = self.ctrl.robot.phase
+        if phase not in (RobotPhase.ARMED, RobotPhase.TELEOP):
+            return {"moved": False, "reason": f"not_armed({phase.name})",
+                    "target_xyz": None}
+        return None
+
+    def get_current_pose(self) -> EEPose:
+        """当前末端位姿 (SO(3)) — Adapter/遥操公共接口 (P1-⑥), 不暴露内部 FK."""
+        p, R, _ = self._read_current_pose()
+        return EEPose(position=p, rotation=R)
 
     def step(self, vx: float, vy: float, vz: float,
              wx: float = 0.0, wy: float = 0.0, wz: float = 0.0,
@@ -1974,24 +2083,14 @@ Expected: FAIL — `cart.step(10,0,0)` 返回 `not_armed`；`FakeClock` 缺失�
         拒动 (控制层看门狗最终权威). 返回 {moved, reason, target_xyz, sigma_min,
         condition, lambda, scale, alarms?}.
         """
-        phase = self.ctrl.robot.phase
-        if phase not in (RobotPhase.ARMED, RobotPhase.TELEOP):
-            return {"moved": False, "reason": f"not_armed({phase.name})",
-                    "target_xyz": None}
-
-        # 0. 测量单调 dt (有界)
-        now = self.clock()
-        if self._last_step_mono is None:
-            dt = self.dt_default_s
-        else:
-            dt = max(self.dt_min_s, min(self.dt_max_s, now - self._last_step_mono))
-        self._last_step_mono = now
-
-        # 1. 陈旧命令看门狗 (单调期限)
+        err = self._armed_or_error()
+        if err is not None:
+            return err
+        dt, now = self._measure_dt()
         if cmd_ts is not None and (now - cmd_ts) > self.stale_cmd_max_s:
             return {"moved": False, "reason": "stale_command", "target_xyz": None}
 
-        # 2. 速度 + 姿态速度钳制 (纯速度钳, 不走盒限幅)
+        # 速度 + 姿态速度钳制 (纯速度钳, 不走盒限幅)
         v = np.array([vx, vy, vz], dtype=float)
         w = np.array([wx, wy, wz], dtype=float)
         nv = float(np.linalg.norm(v))
@@ -2001,17 +2100,49 @@ Expected: FAIL — `cart.step(10,0,0)` 返回 `not_armed`；`FakeClock` 缺失�
         if nw > self.max_ang_rad_s and nw > 1e-12:
             w = w * (self.max_ang_rad_s / nw)
 
-        # 3. FK 反馈
-        ee, q_anchor = self._read_current_ee()
+        # 单次状态读取 → 统一安全链 (P1-⑤: 一次控制周期只读一次真实关节)
+        p_act, _R_act, q_anchor = self._read_current_pose()
+        return self._step_from_state(p_act, q_anchor, v, w, dt)
 
-        # 4. workspace limiter (越界分量缩放/拒绝; 仅当确实被盒挡住才报 blocked,
-        #    零速度且盒内命令必须放行 → 需 clamped 非空)
-        v, clamped = self._limiter(v, ee, dt)
+    def step_pose(self, p_des, R_des, cmd_ts: Optional[float] = None,
+                  rpy_anchor: Optional[np.ndarray] = None,
+                  rpy_limits: Optional[tuple[np.ndarray, np.ndarray]] = None) -> dict:
+        """目标位姿接口 (spec §4.2). SE(3) 误差 → _step_from_state.
+
+        姿态误差 R_err = R_des @ R_act.T → e_R = log_so3 (内部 SO(3)/轴角,
+        禁止 Euler 累加). RPY 仅在可选安全约束 rpy_limits 使用 (相对 rpy_anchor).
+        与 step 共享单次状态读取 (P1-⑤).
+        """
+        err = self._armed_or_error()
+        if err is not None:
+            return err
+        dt, now = self._measure_dt()
+        if cmd_ts is not None and (now - cmd_ts) > self.stale_cmd_max_s:
+            return {"moved": False, "reason": "stale_command", "target_xyz": None}
+
+        p_act, R_act, q_anchor = self._read_current_pose()   # 一次读取
+        R_target = np.asarray(R_des, dtype=float)
+        if rpy_limits is not None and rpy_anchor is not None:
+            R_target = self._clamp_rpy_relative(R_target,
+                                                np.asarray(rpy_anchor, dtype=float),
+                                                rpy_limits)
+        e_p = np.asarray(p_des, dtype=float) - p_act
+        v = np.clip(self.kp_pos * e_p, -self.max_vel_mm_s, self.max_vel_mm_s)
+        R_err = R_target @ R_act.T
+        e_R = log_so3(R_err)
+        w = np.clip(self.kr_ori * e_R, -self.max_ang_rad_s, self.max_ang_rad_s)
+        return self._step_from_state(p_act, q_anchor, v, w, dt)
+
+    def _step_from_state(self, p_act: np.ndarray, q_anchor: list[float],
+                         v: np.ndarray, w: np.ndarray, dt: float) -> dict:
+        """安全链主路径 (spec §1.3 严格顺序), 基于已读取状态, 单周期一次闭环."""
+        # workspace limiter (基于 p_act; 零速度盒内命令放行 → 需 clamped 非空)
+        v, clamped = self._limiter(v, p_act, dt)
         if float(np.linalg.norm(v)) < 1e-9 and clamped:
             return {"moved": False, "reason": "workspace_blocked",
-                    "target_xyz": ee.tolist()}
+                    "target_xyz": p_act.tolist()}
 
-        # 5. 奇异度指标 (归一化) + 自适应阻尼 (λ+scale 实际参与)
+        # 奇异度指标 (归一化) + 自适应阻尼 (λ+scale 实际参与)
         q_src = anchor_to_source(q_anchor)
         J = jacobian(q_src)
         metrics = singularity_metrics(J)
@@ -2021,20 +2152,20 @@ Expected: FAIL — `cart.step(10,0,0)` 返回 `not_armed`；`FakeClock` 缺失�
                                       lam_max=self.lam_max)
         if scale <= 0.0:
             return {"moved": False, "reason": "singular",
-                    "target_xyz": ee.tolist(),
+                    "target_xyz": p_act.tolist(),
                     "sigma_min": metrics["sigma_min"],
                     "condition": metrics["condition_number"],
                     "lambda": lam, "scale": scale}
 
-        # 6. 加权 DLS (twist 已乘 scale → 奇异规避实际生效)
+        # 加权 DLS (twist 已乘 scale → 奇异规避实际生效)
         twist = np.append(v * dt, w * dt) * scale
         weights = [1.0, 1.0, 1.0] + [self.orient_weight] * 3
         dq = damped_ls(J, twist, lam, weights=weights)
 
-        # 7. 预测关节限位缩放 (margin 渐进)
+        # 预测关节限位缩放 (margin 渐进, 只渐进减速; 硬拒绝交给 check_limits_real)
         dq = self._scale_toward_limits(q_src, dq)
 
-        # 8. velocity/acceleration 限制
+        # velocity/acceleration 限制
         dq = np.clip(dq, -math.radians(self.max_dq_deg),
                      math.radians(self.max_dq_deg))
         max_dq_vel = math.radians(self.max_joint_vel_deg_s) * dt
@@ -2045,44 +2176,23 @@ Expected: FAIL — `cart.step(10,0,0)` 返回 `not_armed`；`FakeClock` 缺失�
                                          -max_dq_acc, max_dq_acc)
         self._last_dq = dq
 
-        # 9. 目标角 → anchor → 归一化 → 实时限位守卫 → 下发
+        # 目标角 → anchor → 归一化 → 实时限位守卫 (最终硬拒绝) → 下发
         q_src_target = q_src + np.degrees(dq)
         q_anchor_target = source_to_anchor(q_src_target)
         q_anchor_target = [((x + 180.0) % 360.0) - 180.0 for x in q_anchor_target]
         alarms = self.ctrl.check_limits_real(q_anchor_target, use_kb=True)
         if alarms:
             return {"moved": False, "reason": "limit_alarm", "alarms": alarms,
-                    "target_xyz": (ee + v * dt).tolist(),
+                    "target_xyz": (p_act + v * dt).tolist(),
                     "sigma_min": metrics["sigma_min"],
                     "condition": metrics["condition_number"],
                     "lambda": lam, "scale": scale}
         self.ctrl.set_joints_safe(q_anchor_target, use_kb=True)
         return {"moved": True,
-                "target_xyz": (ee + v * dt).tolist(),
+                "target_xyz": (p_act + v * dt).tolist(),
                 "sigma_min": metrics["sigma_min"],
                 "condition": metrics["condition_number"],
                 "lambda": lam, "scale": scale}
-
-    def step_pose(self, p_des, R_des, cmd_ts: Optional[float] = None,
-                  rpy_anchor: Optional[np.ndarray] = None,
-                  rpy_limits: Optional[tuple[np.ndarray, np.ndarray]] = None) -> dict:
-        """目标位姿接口 (spec §4.2). SE(3) 误差 → step.
-
-        姿态误差 R_err = R_des @ R_act.T → e_R = log_so3 (内部 SO(3)/轴角,
-        禁止 Euler 累加). RPY 仅在可选安全约束 rpy_limits 使用 (相对 rpy_anchor).
-        """
-        p, R_act, _ = self._read_current_pose()
-        R_target = np.asarray(R_des, dtype=float)
-        if rpy_limits is not None and rpy_anchor is not None:
-            R_target = self._clamp_rpy_relative(R_target,
-                                                np.asarray(rpy_anchor, dtype=float),
-                                                rpy_limits)
-        e_p = np.asarray(p_des, dtype=float) - p
-        v = np.clip(self.kp_pos * e_p, -self.max_vel_mm_s, self.max_vel_mm_s)
-        R_err = R_target @ R_act.T
-        e_R = log_so3(R_err)
-        w = np.clip(self.kr_ori * e_R, -self.max_ang_rad_s, self.max_ang_rad_s)
-        return self.step(*v, *w, cmd_ts=cmd_ts)
 
     def _scale_toward_limits(self, q_src: np.ndarray, dq: np.ndarray) -> np.ndarray:
         """预测关节限位缩放: 越近限位越缩 (margin 渐进), 越界 → 缩到 0."""
@@ -2159,7 +2269,7 @@ git -C Arm-robot_VLA commit -m "feat(zdt): CartesianController 6DOF 安全链 + 
 - Consumes: Task 1 `CartesianCommand`/`EEPose`/`JointState`；Task 5/6 的 `ZdtController`/`CartesianController`；现有 `ArmClient`。
 - Produces:
   - `SimulationArmAdapter(arm_client)` — connect/disconnect/get_joint_state/get_ee_pose/move_cartesian_velocity/reset/e_stop
-  - `RealArmAdapter(ctrl: ZdtController, gravity_confirmed=False, **cart_kwargs)` — connect/disconnect/get_joint_state/get_real_joint_angles/get_ee_pose/move_cartesian_velocity/step_pose/reset/e_stop/state
+  - `RealArmAdapter(ctrl, **cart_kwargs)` — `connect()`（**只到 SAFE_IDLE，不自动 arm**）、`arm(gravity_confirmed=False)`、`enter_teleop()`/`exit_teleop()`、`disconnect()`、`get_joint_state()`、`get_real_joint_angles()`、`get_ee_pose()`（经 `cart.get_current_pose()`）、`move_cartesian_velocity()`、`step_pose()`、`reset()`、`e_stop()`、`state()`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2252,6 +2362,25 @@ def test_real_adapter_move_cartesian_sends_fd():
     adapter.move_cartesian_velocity(
         CartesianCommand((10.0, 0.0, 0.0), (0.0, 0.0, 0.0), timestamp=clock.t))
     assert any(f.data and f.data[0] == 0xFD for f in t.sent)
+
+
+def test_real_adapter_connect_does_not_arm():
+    # P0-①: connect() 只到 SAFE_IDLE, 不使能扭矩; arm() 由调用方显式调用
+    t = FakeTransport()
+    cfg = ZdtConfig(timeout_s=0.001, retries=0, reduction_ratios=[1.0] * 6,
+                    calib=[(1.0, 0.0)] * 6)
+    ctrl = ZdtController(config=cfg, transport=t)
+    for addr in range(0x01, 0x07):
+        t.inject(addr, 0x1F, bytes([0x00, 0x01, 0x01]) + b"\x6b")
+    for addr in range(0x01, 0x07):
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    adapter = RealArmAdapter(ctrl)
+    adapter.connect()
+    assert ctrl.robot.phase.name == "SAFE_IDLE"
+    assert not any(f.data and f.data[0] == 0xF3 for f in t.sent)   # 未使能扭矩
+    adapter.arm(gravity_confirmed=True)
+    assert ctrl.robot.phase.name == "ARMED"
+    assert any(f.data and f.data[0] == 0xF3 for f in t.sent)
 
 
 def test_real_adapter_get_ee_pose_uses_fk():
@@ -2352,17 +2481,29 @@ class SimulationArmAdapter:
 
 
 class RealArmAdapter:
-    """真机臂: 封装 CartesianController (spec §6.1). 不直接操作 CAN/IK."""
+    """真机臂: 封装 CartesianController (spec §6.1). 不直接操作 CAN/IK.
 
-    def __init__(self, ctrl, gravity_confirmed: bool = False, **cart_kwargs):
+    P0-①: connect() 只到 SAFE_IDLE (枚举+验证), 不自动 arm/使能扭矩;
+    arm(gravity_confirmed) 由调用方显式调用 (重力关节 J2/J3 需确认).
+    """
+
+    def __init__(self, ctrl, **cart_kwargs):
         from lerobot_robot_massage.zdt.cartesian import CartesianController
         self._ctrl = ctrl
         self._cart = CartesianController(ctrl, **cart_kwargs)
-        self._gravity_confirmed = gravity_confirmed
 
     def connect(self) -> None:
-        self._ctrl.connect()                       # 枚举+验证 → SAFE_IDLE
-        self._ctrl.arm(self._gravity_confirmed)    # 使能扭矩 → ARMED
+        self._ctrl.connect()                       # SAFE_IDLE, 不使能扭矩
+
+    def arm(self, gravity_confirmed: bool = False) -> None:
+        """显式臂置 (使能扭矩) — 调用方在用户确认后调用."""
+        self._ctrl.arm(gravity_confirmed)
+
+    def enter_teleop(self) -> None:
+        self._ctrl.enter_teleop()
+
+    def exit_teleop(self) -> None:
+        self._ctrl.exit_teleop()
 
     def disconnect(self) -> None:
         try:
@@ -2374,15 +2515,15 @@ class RealArmAdapter:
         st = self._ctrl.get_real_state()
         return JointState(q=tuple(st["q"]), dq=tuple(st["velocity"]),
                           current_ma=tuple(st["current"]),
-                          flags=int(st["flags"][0]) if st["flags"] else 0,
+                          flags=tuple(int(f) for f in st["flags"]),
                           status=st["status"])
 
     def get_real_joint_angles(self) -> list[float]:
         return self._ctrl.read_real_angles(use_kb=True)
 
     def get_ee_pose(self) -> EEPose:
-        p, R, _ = self._cart._read_current_pose()
-        return EEPose(position=p.copy(), rotation=R.copy())
+        # P1-⑥: 经公共接口 get_current_pose(), 不依赖 Controller 私有 FK
+        return self._cart.get_current_pose()
 
     def move_cartesian_velocity(self, cmd: CartesianCommand) -> None:
         self._cart.step(*cmd.linear_velocity, *cmd.angular_velocity,
@@ -2436,7 +2577,8 @@ git -C Arm-robot_VLA commit -m "feat(teleop): Simulation/Real ArmAdapter 统一�
 **Interfaces:**
 - Produces:
   - `WatchdogAction(Enum)` — OK / DECAY / STOP / ESTOP
-  - `VisionWatchdog(conf_threshold=0.5, depth_invalid_hold_s=0.2, wrist_jump_mm=150.0, loss_stop_s=0.4, estop_s=1.0, decay_rate=0.5, stale_cmd_s=0.25)`；`update(*, hand_present, hand_confidence, depth_valid, wrist_mm, cmd_ts, now) -> tuple[WatchdogAction, float]`
+  - `VisionWatchdog(conf_threshold=0.5, depth_invalid_hold_s=0.2, wrist_jump_mm=150.0, loss_stop_s=0.4, estop_s=1.0, decay_rate=0.5)`；`update(*, hand_present, hand_confidence, depth_valid, wrist_mm, now) -> tuple[WatchdogAction, float]`
+  - **无 `stale_cmd_s`/`cmd_ts`**（P0-②）：陈旧命令判定归 `CartesianController.step(cmd_ts)`，控制层唯一权威；本看门狗只负责视觉健康（置信/深度/腕跳变/手丢失）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2451,90 +2593,81 @@ from watchdog import VisionWatchdog, WatchdogAction  # noqa: E402
 
 def _wd(**kw):
     d = dict(conf_threshold=0.5, loss_stop_s=0.4, estop_s=1.0, decay_rate=0.5,
-             wrist_jump_mm=150.0, stale_cmd_s=0.25)
+             wrist_jump_mm=150.0, depth_invalid_hold_s=0.2)
     d.update(kw)
     return VisionWatchdog(**d)
 
 
+def _upd(w, *, hand_present=True, conf=0.9, depth_valid=True, wrist=(0.0, 0.0, 100.0),
+         now=0.1):
+    return w.update(hand_present=hand_present, hand_confidence=conf,
+                    depth_valid=depth_valid, wrist_mm=wrist, now=now)
+
+
 def test_ok_when_hand_confident():
     w = _wd()
-    action, scale = w.update(hand_present=True, hand_confidence=0.9,
-                             depth_valid=True, wrist_mm=(0.0, 0.0, 100.0),
-                             cmd_ts=0.0, now=0.1)
+    action, scale = _upd(w)
     assert action == WatchdogAction.OK and scale == 1.0
 
 
 def test_low_confidence_escalates_to_decay():
     w = _wd()
-    action, scale = w.update(hand_present=True, hand_confidence=0.3,
-                             depth_valid=True, wrist_mm=(0.0, 0.0, 100.0),
-                             cmd_ts=0.0, now=0.1)
+    _upd(w, conf=0.3, now=0.1)               # 首帧建立 loss_start
+    action, scale = _upd(w, conf=0.3, now=0.2)   # loss_s=0.1 → scale=0.95
     assert action == WatchdogAction.DECAY
     assert 0.0 < scale < 1.0
 
 
 def test_depth_invalid_escalates():
     w = _wd()
-    action, _ = w.update(hand_present=True, hand_confidence=0.9,
-                         depth_valid=False, wrist_mm=(0.0, 0.0, 100.0),
-                         cmd_ts=0.0, now=0.1)
+    action, _ = _upd(w, depth_valid=False)
     assert action == WatchdogAction.DECAY
+
+
+def test_depth_invalid_beyond_hold_stops():
+    # P2-⑧: depth_invalid_hold_s=0.2 内只 DECAY, 超过后按 loss 升级
+    w = _wd()
+    a0, _ = _upd(w, depth_valid=False, now=0.1)
+    assert a0 == WatchdogAction.DECAY
+    a1, s1 = _upd(w, depth_valid=False, now=0.5)   # 0.4s > hold 0.2 且 > loss_stop 0.4
+    assert a1 == WatchdogAction.STOP and s1 == 0.0
 
 
 def test_hand_lost_prolonged_stops():
     w = _wd()
-    _, _ = w.update(hand_present=False, hand_confidence=0.0, depth_valid=True,
-                    wrist_mm=None, cmd_ts=0.0, now=0.1)
-    action, scale = w.update(hand_present=False, hand_confidence=0.0,
-                             depth_valid=True, wrist_mm=None,
-                             cmd_ts=0.0, now=0.5)
+    _, _ = _upd(w, hand_present=False, conf=0.0, wrist=None, now=0.1)
+    action, scale = _upd(w, hand_present=False, conf=0.0, wrist=None, now=0.5)
     assert action == WatchdogAction.STOP and scale == 0.0
 
 
 def test_hand_lost_long_estops():
     w = _wd()
     for now in (0.1, 0.5, 1.2):
-        _, _ = w.update(hand_present=False, hand_confidence=0.0,
-                        depth_valid=True, wrist_mm=None, cmd_ts=0.0, now=now)
-    assert True  # 已连续丢失 > estop_s; 重新更新验证
-    action, _ = w.update(hand_present=False, hand_confidence=0.0,
-                         depth_valid=True, wrist_mm=None, cmd_ts=0.0, now=1.3)
+        _, _ = _upd(w, hand_present=False, conf=0.0, wrist=None, now=now)
+    action, _ = _upd(w, hand_present=False, conf=0.0, wrist=None, now=1.3)
     assert action == WatchdogAction.ESTOP
 
 
 def test_decay_is_gradual_not_hold():
     # 禁止无限保持上一帧: 丢失后 scale 单调下降
     w = _wd()
-    s0 = w.update(hand_present=False, hand_confidence=0.0, depth_valid=True,
-                  wrist_mm=None, cmd_ts=0.0, now=0.05)[1]
-    s1 = w.update(hand_present=False, hand_confidence=0.0, depth_valid=True,
-                  wrist_mm=None, cmd_ts=0.0, now=0.15)[1]
+    _upd(w, hand_present=False, conf=0.0, wrist=None, now=0.05)  # 建立 loss_start
+    s0 = _upd(w, hand_present=False, conf=0.0, wrist=None, now=0.15)[1]  # 0.95
+    s1 = _upd(w, hand_present=False, conf=0.0, wrist=None, now=0.25)[1]  # 0.90
     assert s1 < s0 < 1.0
 
 
 def test_wrist_jump_stops():
     w = _wd()
-    w.update(hand_present=True, hand_confidence=0.9, depth_valid=True,
-             wrist_mm=(0.0, 0.0, 100.0), cmd_ts=0.0, now=0.1)
-    action2, _ = w.update(hand_present=True, hand_confidence=0.9, depth_valid=True,
-                          wrist_mm=(300.0, 0.0, 100.0), cmd_ts=0.1, now=0.2)
+    _upd(w, now=0.1)
+    action2, _ = _upd(w, wrist=(300.0, 0.0, 100.0), now=0.2)
     assert action2 == WatchdogAction.STOP
-
-
-def test_stale_command_stops():
-    w = _wd()
-    action, _ = w.update(hand_present=True, hand_confidence=0.9, depth_valid=True,
-                         wrist_mm=(0.0, 0.0, 100.0), cmd_ts=0.0, now=0.4)
-    assert action == WatchdogAction.STOP
 
 
 def test_recovery_after_loss_returns_ok():
     w = _wd()
-    w.update(hand_present=False, hand_confidence=0.0, depth_valid=True,
-             wrist_mm=None, cmd_ts=0.0, now=0.1)
-    action, scale = w.update(hand_present=True, hand_confidence=0.9,
-                             depth_valid=True, wrist_mm=(0.0, 0.0, 100.0),
-                             cmd_ts=0.2, now=0.3)
+    _upd(w, hand_present=False, conf=0.0, wrist=None, now=0.1)
+    action, scale = _upd(w, now=0.3)
     assert action == WatchdogAction.OK and scale == 1.0
 
 
@@ -2561,9 +2694,10 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'watchdog'`
 ```python
 """scripts/teleop/watchdog.py — 视觉遥操分级看门狗 (spec §6.2, TASK-16).
 
-陈旧命令的最终权威在控制层 (CartesianController.step 的 cmd_ts 单调期限检查);
-本看门狗只对视觉信号分级, 产出 (action, velocity_scale), 禁止无限保持上一帧
-命令 (持续丢失 → 停; 严重 → e_stop 请求).
+职责边界 (P0-②): 陈旧命令判定归控制层 (CartesianController.step 的 cmd_ts
+单调期限检查), 本看门狗**不接收 cmd_ts** — 只对视觉信号分级:
+手丢失 / 低置信 / 深度无效 / 腕跳变, 产出 (action, velocity_scale).
+禁止无限保持上一帧命令 (持续丢失 → 停; 严重 → e_stop 请求).
 """
 from __future__ import annotations
 from enum import Enum, auto
@@ -2574,33 +2708,30 @@ import numpy as np
 class WatchdogAction(Enum):
     OK = auto()       # 正常 → 传递命令
     DECAY = auto()    # 短暂丢失 → 速度衰减 (hold with decay)
-    STOP = auto()     # 持续丢失/跳变/陈旧 → 停止 (命令清零)
+    STOP = auto()     # 持续丢失/跳变 → 停止 (命令清零)
     ESTOP = auto()    # 严重丢失 → 请求 e_stop
 
 
 class VisionWatchdog:
-    """视觉信号分级: 手丢失/低置信/深度无效/腕跳变/命令陈旧."""
+    """视觉信号分级: 手丢失/低置信/深度无效/腕跳变."""
 
     def __init__(self, conf_threshold: float = 0.5,
                  depth_invalid_hold_s: float = 0.2,
                  wrist_jump_mm: float = 150.0,
                  loss_stop_s: float = 0.4,
                  estop_s: float = 1.0,
-                 decay_rate: float = 0.5,
-                 stale_cmd_s: float = 0.25):
+                 decay_rate: float = 0.5):
         self.conf_threshold = conf_threshold
         self.depth_invalid_hold_s = depth_invalid_hold_s
         self.wrist_jump_mm = wrist_jump_mm
         self.loss_stop_s = loss_stop_s
         self.estop_s = estop_s
         self.decay_rate = decay_rate
-        self.stale_cmd_s = stale_cmd_s
         self._loss_start: float | None = None
         self._last_wrist: np.ndarray | None = None
 
     def update(self, *, hand_present: bool, hand_confidence: float,
-               depth_valid: bool, wrist_mm, cmd_ts: float,
-               now: float) -> tuple[WatchdogAction, float]:
+               depth_valid: bool, wrist_mm, now: float) -> tuple[WatchdogAction, float]:
         """每帧调用. Returns (action, velocity_scale), scale∈[0,1]."""
         vision_ok = (hand_present and hand_confidence >= self.conf_threshold
                      and depth_valid)
@@ -2619,9 +2750,13 @@ class VisionWatchdog:
         if self._loss_start is None:
             self._loss_start = now
         loss_s = now - self._loss_start
-        if loss_s > self.estop_s:
+        # 深度无效的短暂期 (< hold_s) 只衰减不升级 (P2-⑧)
+        if not depth_valid and loss_s < self.depth_invalid_hold_s:
+            scale = max(0.0, 1.0 - self.decay_rate * loss_s)
+            return WatchdogAction.DECAY, scale
+        if loss_s >= self.estop_s:
             return WatchdogAction.ESTOP, 0.0
-        if loss_s > self.loss_stop_s:
+        if loss_s >= self.loss_stop_s:
             return WatchdogAction.STOP, 0.0
         scale = max(0.0, 1.0 - self.decay_rate * loss_s)
         return WatchdogAction.DECAY, scale
@@ -2819,7 +2954,8 @@ class EpisodeRecorder:
         self._frame_idx = 0
 
     def start_episode(self) -> str:
-        ep_id = time.strftime("episode_%Y%m%d_%H%M%S")
+        # P0-③: 纳秒级精度, 同秒启动多个 episode 也不会覆盖
+        ep_id = f"episode_{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns()}"
         self._episode_dir = self.out_dir / ep_id
         if self._episode_dir.exists():
             shutil.rmtree(self._episode_dir)
@@ -3104,7 +3240,7 @@ class RealArmTeleop:
             hand_confidence=float(hand.get("confidence", 0.0)) if hand else 0.0,
             depth_valid=bool(hand and hand.get("depth_valid")),
             wrist_mm=hand.get("wrist_mm") if hand else None,
-            cmd_ts=cmd_ts, now=now)
+            now=now)   # 陈旧判定归控制层 (adapter.move_cartesian_velocity → step(cmd_ts))
 
         scaled = CartesianCommand(
             tuple(float(v) * scale for v in cmd.linear_velocity),
@@ -3196,7 +3332,10 @@ def main():
 
     teleop = RealArmTeleop(adapter, watchdog, recorder, hand_provider,
                            key_provider=lambda: 0)
+    # P0-①: connect → SAFE_IDLE → 显式 arm (已 -y 确认重力) → TELEOP → reset (实际运动)
     adapter.connect()
+    adapter.arm(gravity_confirmed=True)
+    adapter.enter_teleop()
     adapter.reset()
     recorder.start_episode()
     try:
@@ -3326,7 +3465,30 @@ class FakeMuJoCoServer:
             return None                                 # remote_enable/disable/soft_reset
 
 
+def _rotation_angle(R):
+    """SO(3) → 转角 (rad) (测试辅助)."""
+    import math
+    return math.acos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))
+
+
+def _run_sim_sequence(server, adapter, wd, rec, cmd_6, frames=30, dt=0.02):
+    """驱动 N 帧固定 6DOF 命令, 返回 (start_T, end_T). 手始终在 → watchdog OK."""
+    present = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
+               "wrist_mm": (0.0, 0.0, 100.0)}
+    teleop = RealArmTeleop(adapter, wd, rec,
+                           hand_provider=lambda: dict(present),
+                           key_provider=lambda: None)
+    teleop._build_command = lambda h, ts: CartesianCommand(
+        tuple(cmd_6[:3]), tuple(cmd_6[3:]), timestamp=ts)
+    T0 = fk_mdh(np.array(server.q))
+    for i in range(frames):
+        teleop.run_once(cmd_ts=0.0 + i * dt, now=0.0 + i * dt)
+    T1 = fk_mdh(np.array(server.q))
+    return T0, T1
+
+
 def test_sim_regression_full_stack():
+    """全栈闭环: adapter + watchdog + recorder, 30 帧纯 +X 位移 > 2mm."""
     server = FakeMuJoCoServer()
     arm = _make_arm_client(server.port)
     adapter = SimulationArmAdapter(arm)
@@ -3334,24 +3496,60 @@ def test_sim_regression_full_stack():
     rec = EpisodeRecorder("/tmp/sim_reg_1")
     rec.start_episode()
     adapter.connect()
-
-    # 手始终在 → watchdog 保持 OK, 30 帧全部运动 (位移确定)
-    present_hand = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
-                    "wrist_mm": (0.0, 0.0, 100.0)}
-    teleop = RealArmTeleop(adapter, wd, rec,
-                           hand_provider=lambda: dict(present_hand),
-                           key_provider=lambda: None)
-    teleop._build_command = lambda h, ts: CartesianCommand(
-        (5.0, 0.0, 0.0), timestamp=ts)                  # 固定 +x 命令
-    q0 = np.array(server.q)
-    x0 = fk_mdh(q0)[0, 3]
-    for i in range(30):
-        teleop.run_once(cmd_ts=0.0 + i * 0.02, now=0.0 + i * 0.02)
-    x1 = fk_mdh(np.array(server.q))[0, 3]
+    T0, T1 = _run_sim_sequence(server, adapter, wd, rec, (5.0, 0.0, 0.0, 0, 0, 0))
     # 30 帧 × 5mm/s × 0.02s = 3mm (+x 净位移, FK 积分误差容忍)
-    assert x1 - x0 > 2.0, f"仿真闭环位移过小: {x1 - x0:.2f}mm"
+    assert T1[0, 3] - T0[0, 3] > 2.0, f"仿真闭环位移过小: {T1[0,3]-T0[0,3]:.2f}mm"
     stats = rec.finish_episode()
     assert stats["records"] == 30
+    adapter.disconnect()
+    server._sock.close()
+
+
+def test_sim_regression_six_dof():
+    """P1-⑦: 真正 6DOF — 纯 X/Y/Z 验位置、纯 Rx/Ry/Rz 验姿态."""
+    cases = [
+        ("X",  (5.0, 0.0, 0.0, 0.0, 0.0, 0.0), "pos", 0),
+        ("Y",  (0.0, 5.0, 0.0, 0.0, 0.0, 0.0), "pos", 1),
+        ("Z",  (0.0, 0.0, 5.0, 0.0, 0.0, 0.0), "pos", 2),
+        ("Rx", (0.0, 0.0, 0.0, 0.15, 0.0, 0.0), "rot", 0),
+        ("Ry", (0.0, 0.0, 0.0, 0.0, 0.15, 0.0), "rot", 1),
+        ("Rz", (0.0, 0.0, 0.0, 0.0, 0.0, 0.15), "rot", 2),
+    ]
+    for label, cmd6, kind, idx in cases:
+        server = FakeMuJoCoServer()
+        arm = _make_arm_client(server.port)
+        adapter = SimulationArmAdapter(arm)
+        wd = VisionWatchdog()
+        rec = EpisodeRecorder(f"/tmp/sim_6dof_{label}")
+        rec.start_episode()
+        adapter.connect()
+        T0, T1 = _run_sim_sequence(server, adapter, wd, rec, cmd6)
+        dp = T1[:3, 3] - T0[:3, 3]
+        dR = _rotation_angle(T0[:3, :3].T @ T1[:3, :3])
+        if kind == "pos":
+            assert abs(dp[idx]) > 2.0, f"{label} 位置未动: {dp}"
+        else:
+            assert dR > 0.05, f"{label} 姿态未动: {dR} rad"
+        assert rec.finish_episode()["records"] == 30
+        adapter.disconnect()
+        server._sock.close()
+
+
+def test_sim_regression_combined_6dof():
+    """组合 [vx,vy,vz,wx,wy,wz] 同时移动位置 + 姿态."""
+    server = FakeMuJoCoServer()
+    arm = _make_arm_client(server.port)
+    adapter = SimulationArmAdapter(arm)
+    wd = VisionWatchdog()
+    rec = EpisodeRecorder("/tmp/sim_6dof_comb")
+    rec.start_episode()
+    adapter.connect()
+    T0, T1 = _run_sim_sequence(server, adapter, wd, rec,
+                               (3.0, 2.0, 1.0, 0.08, 0.06, 0.04))
+    dp = T1[:3, 3] - T0[:3, 3]
+    dR = _rotation_angle(T0[:3, :3].T @ T1[:3, :3])
+    assert float(np.linalg.norm(dp)) > 2.0, f"组合位置未动: {dp}"
+    assert dR > 0.05, f"组合姿态未动: {dR} rad"
     adapter.disconnect()
     server._sock.close()
 

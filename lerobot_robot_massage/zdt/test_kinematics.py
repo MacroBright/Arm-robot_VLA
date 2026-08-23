@@ -1,4 +1,5 @@
 """kinematics 模块测试 — FK/IK 移植验证 (源项目 robot_kinematics.c 对拍)."""
+import math
 import sys
 from pathlib import Path
 
@@ -7,8 +8,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from lerobot_robot_massage.zdt.kinematics import (  # noqa: E402
-    D_H, RESET_POSE_DEG, T_0_6_RESET, damped_ls, fk_mdh, ik_analytic,
-    ik_position, jacobian,
+    D_H, RESET_POSE_DEG, T_0_6_RESET, adaptive_damping, damped_ls, fk_mdh,
+    ik_analytic, ik_position, jacobian, log_so3, singularity_metrics,
 )
 
 
@@ -190,6 +191,119 @@ def test_damped_ls_attitude_lock():
     assert ang < 0.5, f"姿态漂移 {ang}°"
     # J5 (source 帧 index 4) 不翻腕: 解出的增量应很小
     assert abs(math.degrees(dq[4])) < 1.0, f"J5 dq {math.degrees(dq[4])}°"
+
+
+# ── SO(3)/奇异度 (2026-08-23, spec TASK-25) ────────────────
+
+def _exp_so3(w):
+    """Rodrigues: 轴角 → SO(3). 测试辅助, 不依赖 scipy."""
+    w = np.asarray(w, float)
+    theta = float(np.linalg.norm(w))
+    if theta < 1e-12:
+        return np.eye(3)
+    u = w / theta
+    K = np.array([[0, -u[2], u[1]], [u[2], 0, -u[0]], [-u[1], u[0], 0]])
+    return np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
+
+
+def test_log_so3_identity_is_zero():
+    assert np.linalg.norm(log_so3(np.eye(3))) < 1e-12
+
+
+def test_log_so3_small_angle_stable():
+    # 近零: 一阶支, 无 1/sinθ 放大
+    w = np.array([1e-8, 2e-8, -1e-8])
+    got = log_so3(_exp_so3(w))
+    assert np.linalg.norm(got) < 1e-6
+    np.testing.assert_allclose(got, w, atol=1e-9)
+
+
+def test_log_so3_known_axis_angle():
+    w = np.array([0.3, -0.2, 0.5])
+    got = log_so3(_exp_so3(w))
+    np.testing.assert_allclose(got, w, atol=1e-9)
+
+
+def test_log_so3_norm_equals_angle():
+    for angle in (0.05, 1.2, 2.5, 3.0):
+        w = np.array([1.0, 2.0, -1.0])
+        w = w / np.linalg.norm(w) * angle
+        assert abs(float(np.linalg.norm(log_so3(_exp_so3(w)))) - angle) < 1e-9
+
+
+def test_log_so3_near_pi_roundtrip():
+    # 近 π: 对角提取支, exp∘log ≈ R
+    for axis in (np.array([1.0, 0, 0]), np.array([0.6, 0.8, 0.0]), np.array([0.3, -0.4, 0.85])):
+        u = axis / np.linalg.norm(axis)
+        R = _exp_so3(u * (math.pi - 1e-4))
+        back = _exp_so3(log_so3(R))
+        assert np.abs(back - R).max() < 1e-3, f"axis={u} err={np.abs(back-R).max()}"
+
+
+def test_log_so3_exact_pi_roundtrip():
+    for axis in (np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0]),
+                 np.array([1.0, 1.0, 1.0])):
+        u = axis / np.linalg.norm(axis)
+        R = _exp_so3(u * math.pi)
+        back = _exp_so3(log_so3(R))
+        assert np.abs(back - R).max() < 1e-6, f"axis={u} err={np.abs(back-R).max()}"
+
+
+def test_ee_pose_to_rotation_vector_matches_log_so3():
+    # 修订 #2 链路: types.EEPose.to_rotation_vector == kinematics.log_so3
+    # (该方法在 Task 1 定义但依赖本任务的 log_so3, 故测试放这里)
+    from lerobot_robot_massage.zdt.types import EEPose
+    w0 = np.array([0.3, -0.2, 0.5])
+    p = EEPose(position=np.zeros(3), rotation=_exp_so3(w0))
+    np.testing.assert_allclose(p.to_rotation_vector(), w0, atol=1e-9)
+
+
+def test_singularity_metrics_unit_independent():
+    # 修订 #1: 平移单位变化 (J[:, :3] *= 0.01) 不改变归一化后条件数.
+    # length_scale 须与 J 同单位: 200mm 在新单位下 = 200*0.01 = 2.0
+    # (固定数值 length_scale 下位置列整体缩放会改变条件数 — 见 task-2-report 修订记录)
+    from lerobot_robot_massage.zdt.kinematics import jacobian
+    q = [90.0, 135.0, 315.0, 0.0, 255.0, 0.0]
+    J = jacobian(q)
+    m1 = singularity_metrics(J, length_scale=200.0)
+    J2 = J.copy()
+    J2[:, :3] *= 0.01                     # 真正的平移单位换算 (P1-④)
+    m2 = singularity_metrics(J2, length_scale=2.0)   # 200mm 换算到新单位
+    assert abs(m1["condition_number"] - m2["condition_number"]) < 1e-6
+    assert m1["sigma_min"] <= m1["sigma_max"] + 1e-12
+
+
+def test_singularity_metrics_order_and_manip():
+    from lerobot_robot_massage.zdt.kinematics import jacobian
+    for q in ([90.0, 135.0, 315.0, 0.0, 255.0, 0.0], [90.0, 90.0, -90.0, 0.0, 90.0, 0.0]):
+        m = singularity_metrics(jacobian(q))
+        assert m["sigma_min"] >= 0
+        assert m["sigma_max"] > 0
+        assert m["manipulability"] > 0
+        assert m["condition_number"] >= 1.0
+
+
+def test_adaptive_damping_normal_band():
+    m = {"sigma_min": 0.5, "sigma_max": 1.0, "condition_number": 2.0,
+         "manipulability": 0.3, "length_scale": 200.0}
+    lam, scale = adaptive_damping(m, 10.0, near_ratio=0.3, sing_ratio=0.1)
+    assert lam == 10.0 and scale == 1.0
+
+
+def test_adaptive_damping_singular_band():
+    m = {"sigma_min": 0.05, "sigma_max": 1.0, "condition_number": 20.0,
+         "manipulability": 0.0, "length_scale": 200.0}
+    lam, scale = adaptive_damping(m, 10.0, near_ratio=0.3, sing_ratio=0.1)
+    assert scale == 0.0
+    assert lam == 50.0  # lam_max = base*5
+
+
+def test_adaptive_damping_near_band_interpolates():
+    m = {"sigma_min": 0.2, "sigma_max": 1.0, "condition_number": 5.0,
+         "manipulability": 0.1, "length_scale": 200.0}
+    lam, scale = adaptive_damping(m, 10.0, near_ratio=0.3, sing_ratio=0.1)
+    assert 0.0 < scale < 1.0
+    assert 10.0 < lam < 50.0
 
 
 if __name__ == "__main__":

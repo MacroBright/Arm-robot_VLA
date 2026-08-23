@@ -456,3 +456,89 @@ def anchor_to_source(q_anchor: list[float]) -> list[float]:
     """anchor 帧关节角 → source 帧 (复位=RESET_POSE_DEG)."""
     return [(v + SOURCE_TO_ANCHOR_OFFSET[i]) % 360.0
             for i, v in enumerate(q_anchor)]
+
+
+# ── SO(3)/奇异度扩展 (2026-08-23, spec TASK-25) ─────────────
+
+# 雅可比位置列归一化尺度: 臂特征长度 (≈ 连杆 3 长度 200mm).
+# 归一化后 SVD 的条件数与位置/旋转列的绝对单位无关 (修订 #1).
+JACOBIAN_LENGTH_SCALE_MM: float = 200.0
+
+
+def log_so3(R: np.ndarray, theta_small: float = 1e-6,
+            theta_pi: float = 1e-3) -> np.ndarray:
+    """SO(3) → 轴角向量 ∈ R³ (rad). 内部控制旋转表示 (禁止 Euler 累加).
+
+    三分支保证近 0/近 π 稳健 (修订 #3):
+      * θ < theta_small   → 一阶近似 ½·unskew(R−Rᵀ), 避开 1/sinθ;
+      * sinθ≈0 且 θ≈π      → 从对称部 R≈2uuᵀ−I 提取轴 (对角 + 行列符号),
+                             取 θ=π (exp(±πu) 同 R, 符号确定性归一);
+      * 常规支             → log = unskew(R−Rᵀ) · θ/sinθ.
+    """
+    R = np.asarray(R, float)
+    cos_t = float(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))
+    theta = math.acos(cos_t)
+    w = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+    n = float(np.linalg.norm(w))                 # = 2·sinθ
+    if theta < theta_small:
+        return 0.5 * w
+    if n < 1e-8 or (math.pi - theta) < theta_pi:
+        d = np.clip((np.diag(R) + 1.0) / 2.0, 0.0, 1.0)
+        u = np.sqrt(d)
+        # 用非对角元恢复符号 (R_ij = 2·u_i·u_j)
+        if u[0] > 1e-6:
+            u[1] = math.copysign(u[1], R[0, 1])
+            u[2] = math.copysign(u[2], R[0, 2])
+        elif u[1] > 1e-6:
+            u[2] = math.copysign(u[2], R[1, 2])
+        i = int(np.argmax(np.abs(u)))            # 全局符号确定性归一
+        if u[i] < 0.0:
+            u = -u
+        return math.pi * u
+    return w * (theta / n)
+
+
+def singularity_metrics(J: np.ndarray, length_scale: float = JACOBIAN_LENGTH_SCALE_MM) -> dict:
+    """雅可比 SVD 奇异度指标 — 位置列先按 length_scale 归一化 (修订 #1).
+
+    J 列 = [vx,vy,vz,wx,wy,wz]; 位置列 (前 3) mm, 旋转列无量纲.
+    归一化后条件数与单位无关; DLS 的物理 λ 仍用未归一化 J (本函数只做检测).
+
+    Returns:
+        {sigma_min, sigma_max, condition_number, manipulability, length_scale}
+        condition_number = sigma_max/sigma_min (sigma_min→0 → inf, 调用方处理).
+    """
+    Jn = np.asarray(J, float).copy()
+    Jn[:, :3] /= length_scale
+    s = np.linalg.svd(Jn, compute_uv=False)
+    sigma_min = float(s[-1])
+    sigma_max = float(s[0])
+    return {
+        "sigma_min": sigma_min,
+        "sigma_max": sigma_max,
+        "condition_number": (sigma_max / sigma_min if sigma_min > 1e-12
+                             else float("inf")),
+        "manipulability": float(np.prod(s)),
+        "length_scale": float(length_scale),
+    }
+
+
+def adaptive_damping(metrics: dict, base_lam: float,
+                     near_ratio: float = 0.3, sing_ratio: float = 0.1,
+                     lam_max: float | None = None) -> tuple[float, float]:
+    """三档阻尼 + 速度缩放. 返回 (λ, velocity_scale).
+
+    阈值 = sigma_min/sigma_max (归一化后单位无关; 真机 bring-up 实测校准).
+      NORMAL       (ratio > near_ratio): (base_lam, 1.0)
+      NEAR_SINGULAR: λ↑ scale↓ 线性内插, 实际参与 (twist *= scale)
+      SINGULAR     (ratio ≤ sing_ratio): (lam_max, 0.0) → 调用方停车/拒绝
+    """
+    ratio = metrics["sigma_min"] / max(metrics["sigma_max"], 1e-12)
+    if ratio > near_ratio:
+        return base_lam, 1.0
+    lam_max = lam_max if lam_max is not None else base_lam * 5.0
+    if ratio <= sing_ratio:
+        return lam_max, 0.0
+    t = (ratio - sing_ratio) / (near_ratio - sing_ratio)   # (0,1), 越近奇异越小
+    lam = base_lam + (lam_max - base_lam) * (1.0 - t)
+    return lam, t

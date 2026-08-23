@@ -338,14 +338,16 @@ def test_ee_pose_to_rotation_vector_matches_log_so3():
 
 
 def test_singularity_metrics_unit_independent():
-    # 修订 #1: 平移单位变化 (mm→cm: J[:, :3] *= 0.01) 不改变归一化后条件数
+    # 修订 #1: 归一化不变性 — 位置列与 length_scale 同步缩放 (单位换算) 不改变条件数.
+    # 固定 length_scale 下, cond 只取决于 J[:, :3]/length_scale 之比:
+    # J2 = J×0.01 且 length_scale=2.0 (=200×0.01) → 比值不变 → cond 不变.
     from lerobot_robot_massage.zdt.kinematics import jacobian
     q = [90.0, 135.0, 315.0, 0.0, 255.0, 0.0]
     J = jacobian(q)
     m1 = singularity_metrics(J)
     J2 = J.copy()
-    J2[:, :3] *= 0.01                     # 真正的平移单位换算 (P1-④)
-    m2 = singularity_metrics(J2)
+    J2[:, :3] *= 0.01                     # 平移单位换算 (位置列缩小 100×)
+    m2 = singularity_metrics(J2, length_scale=2.0)   # length_scale 同步缩 100×
     assert abs(m1["condition_number"] - m2["condition_number"]) < 1e-6
     assert m1["sigma_min"] <= m1["sigma_max"] + 1e-12
 

@@ -339,21 +339,23 @@ class ZdtController:
     def set_joints_safe(self, angles: list[float],
                         calib_offsets: Optional[list] = None,
                         use_kb: bool = False,
-                        calib_kb: Optional[list] = None) -> list[float]:
+                        calib_kb: Optional[list] = None,
+                        real_angles: Optional[list[float]] = None) -> list[float]:
         """B 任务: 用 0x36 真实位置做软限位 (替代 set_joints 的命令积分限位).
 
-        流程: 读 0x36 真实位置 → clamp 到限位 → 相对真实位置最短路径 → 0xFD
+        流程: 读 0x36 真实位置 (或复用传入 real_angles) → clamp 到限位 → 相对真实位置最短路径 → 0xFD
               → 同步更新 _tracked_angles (命令积分与真实位置对齐).
 
         与 set_joints 区别: 限位基准从 tracked_deg 换成 0x36 真实位置,
-        外力搬动/失步后仍准确. 代价: 每次多 6 次 0x36 读 (CAN 往返).
+        外力搬动/失步后仍准确. 代价: 若未传入 real_angles 则每次多 6 次 0x36 读 (CAN 往返).
 
         返回: 实际下发的目标角度 (clamp 后). 调用方可对比入参判断是否被限位.
         """
         n = len(self.config.joint_addrs)
         if len(angles) < n:
             raise ValueError(f"需 {n} 个角度, 实际 {len(angles)}")
-        real_angles = self.read_real_angles(calib_offsets, use_kb, calib_kb)
+        if real_angles is None:
+            real_angles = self.read_real_angles(calib_offsets, use_kb, calib_kb)
         targets = [0.0] * n
         for i in range(n):
             lo, hi = self.config.limits[i]
@@ -388,7 +390,8 @@ class ZdtController:
                           calib_offsets: Optional[list] = None,
                           use_kb: bool = False,
                           calib_kb: Optional[list] = None,
-                          high_freq: frozenset = frozenset({1, 2, 3, 4})) -> list[dict]:
+                          high_freq: frozenset = frozenset({1, 2, 3, 4}),
+                          real_angles: Optional[list[float]] = None) -> list[dict]:
         """实时限位守卫: 目标/真实角度越出限位边界 → 单轴 stop + 告警.
 
         用于 IK 笛卡尔遥操数据采集的控制循环, 每帧调用. 目的: 防关节摆动过大
@@ -409,7 +412,8 @@ class ZdtController:
         n = len(self.config.joint_addrs)
         if len(targets) < n:
             raise ValueError(f"需 {n} 个角度, 实际 {len(targets)}")
-        real_angles = self.read_real_angles(calib_offsets, use_kb, calib_kb)
+        if real_angles is None:
+            real_angles = self.read_real_angles(calib_offsets, use_kb, calib_kb)
         alarms = []
         for i in range(n):
             if i not in high_freq:

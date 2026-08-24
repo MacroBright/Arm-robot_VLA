@@ -15,3 +15,16 @@ def run_all(module_globals: dict) -> None:
                 print(f"FAIL {name}: {exc}")
     print("ALL PASS" if failed == 0 else f"{failed} FAILED")
     sys.exit(1 if failed else 0)
+
+
+class FakeClock:
+    """测试用单调钟: 每次 step() 后 tick(dt) 推进, 模拟帧间隔."""
+
+    def __init__(self, t0: float = 0.0):
+        self.t = float(t0)
+
+    def __call__(self) -> float:
+        return self.t
+
+    def tick(self, dt: float) -> None:
+        self.t += float(dt)

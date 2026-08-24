@@ -136,8 +136,8 @@ class ZdtConfig:
     joint_limit_margin_deg: float = 2.0
     kp_pos: float = 2.0
     kr_ori: float = 2.0
-    ik_near_ratio: float = 0.3
-    ik_sing_ratio: float = 0.1
+    ik_near_ratio: float = 0.15
+    ik_sing_ratio: float = 0.03
     workspace_min: Optional[list] = None      # None = 不启用盒约束 (待真机标定)
     workspace_max: Optional[list] = None
     dt_min_factor: float = 0.5

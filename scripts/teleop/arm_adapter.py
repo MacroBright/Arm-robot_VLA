@@ -60,6 +60,60 @@ class SimulationArmAdapter:
         return "TELEOP"
 
 
+class NoDriveArmAdapter:
+    """空跑/只显示适配器 (no-drive): 未连接物理臂/CAN时用于视觉遥操与UI测试."""
+
+    def __init__(self):
+        self._phase = "NO_DRIVE"
+        self._q = [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
+
+    def connect(self) -> None:
+        self._phase = "SAFE_IDLE"
+
+    def arm(self, gravity_confirmed: bool = False) -> None:
+        self._phase = "ARMED"
+
+    def enter_teleop(self) -> None:
+        self._phase = "TELEOP"
+
+    def exit_teleop(self) -> None:
+        self._phase = "ARMED"
+
+    def disconnect(self) -> None:
+        self._phase = "DISCONNECTED"
+
+    def get_joint_state(self) -> JointState:
+        return JointState(q=tuple(self._q), dq=(0.0,) * 6, current_ma=(0.0,) * 6,
+                          flags=(0,) * 6, status=self._phase)
+
+    def get_real_joint_angles(self) -> list[float]:
+        return list(self._q)
+
+    def get_ee_pose(self) -> EEPose:
+        return EEPose(position=np.zeros(3), rotation=np.eye(3))
+
+    def move_cartesian_velocity(self, cmd: CartesianCommand) -> None:
+        pass
+
+    def step_pose(self, p_des, R_des, **kw) -> None:
+        pass
+
+    def ready(self) -> None:
+        self._q = [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
+
+    def home(self) -> None:
+        self._q = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    def reset(self) -> None:
+        self.ready()
+
+    def e_stop(self) -> None:
+        self._phase = "STOPPED"
+
+    def state(self) -> str:
+        return self._phase
+
+
 class RealArmAdapter:
     """真机臂: 封装 CartesianController (spec §6.1). 不直接操作 CAN/IK.
 
@@ -87,16 +141,22 @@ class RealArmAdapter:
 
     def disconnect(self) -> None:
         try:
-            self._ctrl.disarm()
+            if self._ctrl.robot.phase.name in ("ARMED", "TELEOP"):
+                self._ctrl.disarm()
+        except Exception:
+            pass
         finally:
-            self._ctrl.disconnect()
+            try:
+                self._ctrl.disconnect()
+            except Exception:
+                pass
 
     def get_joint_state(self) -> JointState:
-        st = self._ctrl.get_real_state()
-        return JointState(q=tuple(st["q"]), dq=tuple(st["velocity"]),
-                          current_ma=tuple(st["current"]),
-                          flags=tuple(int(f) for f in st["flags"]),
-                          status=st["status"])
+        q = list(self._cart._q_tracked) if hasattr(self._cart, "_q_tracked") and self._cart._q_tracked is not None else [0.0] * 6
+        return JointState(q=tuple(q), dq=(0.0,) * 6,
+                          current_ma=(0.0,) * 6,
+                          flags=(0,) * 6,
+                          status=self._ctrl.robot.phase.name)
 
     def get_real_joint_angles(self) -> list[float]:
         return self._ctrl.read_real_angles(use_kb=True)

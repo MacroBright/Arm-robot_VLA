@@ -129,6 +129,26 @@ def test_real_adapter_state_and_estop():
     assert t.sent[-1].arbitration_id == 0x0000
 
 
+def test_no_drive_adapter_lifecycle():
+    from arm_adapter import NoDriveArmAdapter
+    a = NoDriveArmAdapter()
+    assert a.state() == "NO_DRIVE"
+    a.connect()
+    assert a.state() == "SAFE_IDLE"
+    a.arm(gravity_confirmed=True)
+    assert a.state() == "ARMED"
+    a.enter_teleop()
+    assert a.state() == "TELEOP"
+    a.ready()
+    assert list(a.get_joint_state().q) == [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
+    a.home()
+    assert list(a.get_joint_state().q) == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    a.e_stop()
+    assert a.state() == "STOPPED"
+    a.disconnect()
+    assert a.state() == "DISCONNECTED"
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

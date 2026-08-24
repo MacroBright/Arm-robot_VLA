@@ -67,3 +67,8 @@ class VisionWatchdog:
             return WatchdogAction.STOP, 0.0
         scale = max(0.0, 1.0 - self.decay_rate * loss_s)
         return WatchdogAction.DECAY, scale
+
+    def reset(self) -> None:
+        """重置看门狗丢失状态与历史记录 (离合重置/恢复时调用)."""
+        self._loss_start = None
+        self._last_wrist = None

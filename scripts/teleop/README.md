@@ -1,199 +1,223 @@
 # 机械臂 6DOF 视觉遥操系统使用教程
 
-> 本文档针对 `Arm-robot_VLA/scripts/teleop/` 目录下的机械臂视觉遥操模块，详细说明系统架构、脚本功能、前置准备、运行指令、安全操作及故障排查。
+> 本文档针对 `Arm-robot_VLA/scripts/teleop/` 目录下的机械臂视觉遥操模块，详细说明系统架构、核心解耦算法、手眼标定向导、实机运行指令、安全操作阶梯及故障排查。
 
 ---
 
-## 1. 脚本与核心文件路径
+## 1. 核心架构与文件索引
 
-所有视觉遥操相关脚本均位于目录：
+所有视觉遥操核心代码均位于目录：
 📂 **`Arm-robot_VLA/scripts/teleop/`**
 
-| 文件名 | 职责与定位 | 说明 |
+| 文件名 | 职责与定位 | 核心技术要点 |
 |---|---|---|
-| **[`real_arm_teleop.py`](real_arm_teleop.py)** | **真机 6DOF 视觉遥操主入口** | RealSense D455 + 手势识别 + 6DOF 笛卡尔控制器 + CAN 直连 |
-| **[`demo_arm_teleop.py`](demo_arm_teleop.py)** | **仿真 / 前代遥操入口** | 适用于 MuJoCo 仿真环境测试或双目/单目算法验证 |
-| **[`arm_adapter.py`](arm_adapter.py)** | **臂控制适配层 (Adapter)** | 提供 `RealArmAdapter` 与 `SimulationArmAdapter` 统一接口 |
-| **[`watchdog.py`](watchdog.py)** | **视觉安全看门狗** | 负责对丢失手部、低置信度、深度无效、腕心跳变进行分级安全防护 |
-| **[`handeye_calib.py`](handeye_calib.py)** | **手眼标定与坐标变换** | 相机系到机械臂基坐标系 (Base) 空间旋转变换与标定生成 |
-| **[`handeye_calib.json`](handeye_calib.json)** | **手眼标定外参配置** | 存储手眼标定矩阵 $R_{cam \to base}$ |
-| **[`test_real_arm_teleop.py`](test_real_arm_teleop.py)** | **遥操管线无硬件单元测试** | Fake Provider 驱动验证按键、陈旧超时、看门狗升级与录制 |
+| **[`real_arm_teleop.py`](real_arm_teleop.py)** | **真机 6DOF 视觉遥操主入口** | RealSense D455 + 3D 刚体掌骨姿态解耦 + 6DOF 闭环笛卡尔控制器 + CAN 直驱 + HUD 仪表盘 |
+| **[`handeye_calib.py`](handeye_calib.py)** | **手眼标定与可视化向导** | 交互式 3 轴挥手向导，Procrustes SVD 正交求解相机系到机械臂基座系 $R_{cam \to base}$ |
+| **[`handeye_calib.json`](handeye_calib.json)** | **手眼外参矩阵存储** | 实时存储 $3\times 3$ 手眼正交旋转外参矩阵 |
+| **[`arm_adapter.py`](arm_adapter.py)** | **机械臂控制适配层 (Adapter)** | 提供 `RealArmAdapter` 与 `NoDriveArmAdapter` 统一控制与状态回读接口 |
+| **[`watchdog.py`](watchdog.py)** | **四级视觉安全看门狗** | 负责对丢失手部、低置信度、深度无效、腕心跳变进行 `OK / DECAY / STOP / ESTOP` 分级防护 |
+| **[`demo_arm_teleop.py`](demo_arm_teleop.py)** | **仿真 / 算法验证入口** | 适用于 MuJoCo 仿真环境测试或纯算法验证 |
+| **[`test_real_arm_teleop.py`](test_real_arm_teleop.py)** | **遥操管线单元测试** | Fake Provider 验证按键、超时、看门狗升级与数据录制 |
+| **[`test_handeye_calib.py`](test_handeye_calib.py)** | **手眼标定单元测试** | 验证正交约束、欧拉角转换与 3 轴映射解算 |
 | **[`test_sim_regression.py`](test_sim_regression.py)** | **6DOF 仿真全栈闭环回归** | `FakeMuJoCoServer` + 6DOF 空间运动位姿积分验证 |
 
 ---
 
-## 2. 系统控制流与安全链路
+## 2. 核心算法特性 (Key Highlights)
 
 ```
-[RealSense D455 相机 (RGB-D)]
-               │
-               ▼
-[HandTracker / WristTracker (手势与手腕 6D 位姿提取)]
-               │
-               ▼
-[VisionWatchdog 视觉看门狗] ─── (手部丢失/跳变/低置信度) ──► [DECAY / STOP / ESTOP]
-               │
-               ▼ (输出规范化 CartesianCommand)
-[RealArmAdapter 机械臂适配器]
-               │
-               ▼
-[CartesianController 6DOF 闭环控制器]
-   ├─ 1. ARMED / TELEOP 状态机门禁
-   ├─ 2. 测量 monotonic dt (单调时钟计算实际周期)
-   ├─ 3. 单调陈旧命令看门狗 (超过 250ms 无新帧自动归零)
-   ├─ 4. 工作空间边界限幅 (Workspace Box Bounding)
-   ├─ 5. 奇异度指标监控与自适应阻尼 (Adaptive Damping DLS)
-   ├─ 6. 预测关节限位渐进减速 (_scale_toward_limits)
-   ├─ 7. 速度 / 加速度硬上限裁剪
-   └─ 8. 实时 0x36 软限位守卫 (check_limits_real)
-               │
-               ▼ (输出安全关节角度 q_target)
-[ZdtController (生命周期状态机) ──► ZdtDriver ──► SocketCAN (can0)]
-               │
-               ▼
-[6 轴 Emm_V5 / ZDT 步进闭环驱动器]
+                    【MediaPipe 3D 神经网络】
+                               │
+                               ▼
+        【提取 3D World Landmarks (米制 3D 刚体骨骼)】
+                               │
+          ┌────────────────────┴────────────────────┐
+          ▼                                         ▼
+【解剖学刚体掌骨 0-5-17】                      【纯手腕深度 Point 0】
+  Wrist(0), IndexMCP(5), PinkyMCP(17)         位于手腕褶皱处，绝不受手指弯曲影响
+  (此三点为刚体手掌骨架，抓握/屈指完全解耦)                 │
+          │                                         ▼
+          ▼                               【纯手腕位置与线速度 v_lin】
+【纯正 SO(3) 手掌姿态 R_palm】
+          │
+          ▼
+【SVD 正交重整化 + 一欧元滤波】
+          │
+          ▼
+【输出摇杆偏角速率 dPitch / dRoll / w_ang (5° 死区, 回平锁定)】
 ```
 
-同时，所有运行数据由 **`EpisodeRecorder`** 同步落盘为标准 JSONL 格式并记录相机帧图片，为后续 VLA / 具身模型训练提供数据集。
+1. **解剖学刚体掌骨解耦（Metacarpal Frame Decoupling）**：
+   - 传统方案在手指弯曲抓握时会因手指遮挡指根导致深度误采样，产生 $20^\circ \sim 30^\circ$ 的伪俯仰/翻滚。
+   - 本系统直接基于 MediaPipe `world_landmarks` 提取**手腕（Point 0）、食指指根（Point 5）、小指指根（Point 17）**构成的刚体掌骨平面。无论操作员握拳、屈指还是做抓取动作，掌面朝向稳如泰山。
+2. **李群 $SO(3)$ 摇杆偏角速率控制（Joystick Rate Mode）**：
+   - 严格通过相对旋转矩阵 $R_{rel} = R_{hand} @ R_{anchor}^T$ 提取偏转角度，彻底杜绝欧拉角奇异点；
+   - 手腕倾斜即可持续控制机械臂旋转，回平即可立刻归零锁定，无旋转死角，支持 `C` 键随时一键重校准零位。
+3. **线速度平滑与低速安全透传**：
+   - EMA 指数滑动滤波 ($\alpha=0.4$) 消除采样微震，死区经过两级解耦，支持低至 5%（$1 \sim 4\text{ mm/s}$）的超低速安全遥操。
+4. **全状态 6 轴电机 HUD 仪表盘**：
+   - 画面右上角实时展示 6 轴电机 `ALL STATUS`（绝对角度、实时相电流、驱动器状态标志）。
 
 ---
 
 ## 3. 运行前置准备
 
-### 3.1 硬件连接
-1. 将 **USB-CAN 分析仪** (如 USBCAN-UCP100) 连接至电脑 USB 端口，并连接机械臂 CAN 总线。
-2. 将 **Intel RealSense D455** 深度相机通过 USB 3.0 数据线连接至电脑。
-3. 机械臂供电电源开启（确保急停物理按钮处于可触及位置）。
+### 3.1 硬件连接与环境建议
+1. **USB-CAN 分析仪**：插入工控机 USB 3.0 接口，CAN-H / CAN-L 接驳机械臂总线；
+2. **Intel RealSense D455 深度相机**：
+   - **最佳操作距离**：**`60 cm ~ 80 cm`**（人手臂半伸展的自然舒适位置）；
+   - **盲区警示**：人手距离镜头不得近于 **`40 cm`**（近于 40cm 会进入双目深度盲区导致丢帧）；
+3. **机械臂动力电源**：开启 24V/48V 动力电源（确保物理急停拍钮处于操作员左手可及范围）。
 
 ### 3.2 启用 SocketCAN 接口
-在终端执行以下命令将 `can0` 接口配置为 **500 kbps** 波特率并启动：
+每次开机后在终端执行一次：
 ```bash
-sudo ip link set can0 type can bitrate 500000
-sudo ip link set can0 up
+sudo ip link set can0 up type can bitrate 500000
 ```
 *验证接口状态*：
 ```bash
 ip link show can0
-# 正常应显示: <NOARP,UP,LOWER_UP,ECHO>
+# 正常应显示: <NOARP,UP,LOWER_UP,ECHO> state UP
 ```
-
-### 3.3 依赖安装
-确保当前 Python 环境（如 `uv` 或 conda 环境）具备以下依赖：
-- `python-can`
-- `pyrealsense2`
-- `opencv-python`
-- `mediapipe`
-- `numpy`, `scipy`
 
 ---
 
-## 4. 运行使用指南
+## 4. (可选) 可视化交互手眼标定向导
 
-### 4.1 启动真机视觉遥操
+如果调整了 RealSense 相机的安装角度或高低位置，建议运行 30 秒可视化标定向导：
+
+```bash
+cd ~/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA
+python scripts/teleop/handeye_calib.py
+```
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ [Step 1/3: 请沿机械臂 +X 方向 (右方) 平移手掌约 15cm]         │
+│ Press [SPACE] to start recording motion vector              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+1. **Step 1/3 (右移 +X)**：按 **`SPACE`** 键开始录制，将手掌向**右方平移 15~20cm**，再次按 **`SPACE`** 保存；
+2. **Step 2/3 (前推 +Y)**：按 **`SPACE`** 键开始录制，将手掌向**前方推移 15~20cm**，再次按 **`SPACE`** 保存；
+3. **Step 3/3 (上抬 +Z)**：按 **`SPACE`** 键开始录制，将手掌向**上方抬高 15~20cm**，再次按 **`SPACE`** 保存；
+4. 系统自动通过 SVD 正交分析解出最优 $R_{cam \to base}$ 矩阵并保存至 `handeye_calib.json`。
+
+---
+
+## 5. 运行使用与分级安全测试指南
+
+### 5.1 启动命令与常用参数
+
 进入主项目目录：
 ```bash
 cd ~/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA
 ```
 
-执行真机遥操命令（**必须携带 `-y` 确认重力关节使能**）：
-```bash
-python scripts/teleop/real_arm_teleop.py --iface can0 -y
-```
-
-### 4.2 常用命令行参数说明
-
-| 参数 | 默认值 | 作用说明 |
+| 场景需求 | 执行命令 | 说明 |
 |---|---|---|
-| `--iface` | `can0` | 指定 SocketCAN 接口名称 |
-| `-y`, `--gravity-confirm` | `False` | **必填**。二次确认使能重力关节（J2/J3）扭矩 |
-| `--calib` | `scripts/teleop/handeye_calib.json` | 指定手眼标定矩阵文件路径 |
-| `--out` | `datasets/teleop_real` | 指定录制轨迹与画面的输出文件夹 |
-| `--no-drive` | `False` | 只做视觉追踪与显示计算，不向 CAN 总线发送驱动指令（用于空跑演练） |
+| **纯视觉空跑演练 (无硬件)** | `python scripts/teleop/real_arm_teleop.py --no-drive` | 仅做视觉识别、HUD 显示与按键测试，不连 CAN 总线 |
+| **真机 5% 超低速安全初测** | `python scripts/teleop/real_arm_teleop.py --iface can0 -y --speed-scale 0.05` | **首次真机必选**。限速 5% ($v \le 4\text{ mm/s}$)，防冲防撞 |
+| **真机 20% 中速推拿测试** | `python scripts/teleop/real_arm_teleop.py --iface can0 -y --speed-scale 0.20` | 推拿标准速度 ($v \le 16\text{ mm/s}$)，适合精细作业 |
+| **真机 100% 全速模式** | `python scripts/teleop/real_arm_teleop.py --iface can0 -y` | 全速跟随 ($v \le 80\text{ mm/s}$)，适合大幅度轨迹采集 |
 
-### 4.3 遥操过程交互与快捷键
+#### 常用命令行参数说明：
+- `--iface can0`：指定 SocketCAN 接口名称（默认 `can0`）；
+- `-y` 或 `--gravity-confirm`：**必须携带**，显式二次确认使能重力关节（J2/J3）扭矩；
+- `--speed-scale <float>`：全局速度缩放系数（`0.01` ~ `1.0`，默认 `1.0`）；
+- `--calib <path>`：指定手眼标定矩阵文件路径（默认 `scripts/teleop/handeye_calib.json`）；
+- `--out <path>`：指定多模态训练数据集录制目录（默认 `datasets/teleop_real`）；
+- `--no-drive`：空跑模式开关。
 
-在弹出的 OpenCV 画面窗口中，支持以下键盘交互（物理隔离灵巧手手势，大键位防误触）：
+---
+
+### 5.2 遥操键盘交互快捷键
+
+在弹出的 OpenCV 画面窗口中，支持以下全局快捷键：
 
 - **`SPACE` 空格键 (离合器 Clutch Toggle 开关)**：
-  - **按一下暂停离合 (`CLUTCH PAUSED`)**：机械臂锁定当前位姿静止，操作员可自由移动人手、换姿态或移出视野；
-  - **再按一下接合遥操 (`TELEOP ACTIVE`)**：重新以人手当前位置为基准点恢复遥操跟随，并自动触发 **0.3 秒平滑缓起 (Ramp-up)**，杜绝接合瞬间阶跃冲击。
+  - **启动默认态**：系统启动默认处于 **`[CLUTCH PAUSED]`（黄色）**，速度强制锁定为 0，防止误动；
+  - **按一下空格**：切换为 **`[TELEOP ACTIVE]`（绿色）**，开始实时响应手部动作；
+  - **再按一下空格**：随时暂停锁定当前机械臂位姿，操作员可自由休息或抽手。
+- **`C` 键 (一键姿态零点重校准 Re-center)**：
+  - 手掌放平后按 `C`，立即将当前手部朝向设为中立摇杆零位。
 - **`R` 键 (回准备姿态 Ready)**：
-  - 各关节安全同步运动至按摩准备姿态（`[0°, 60°, 50°, 0°, 120°, 0°]`），速度 **100.0 RPM** 同步。
+  - 各关节安全同步平滑运动至按摩准备姿态（`[0°, 60°, 50°, 0°, 120°, 0°]`）。
 - **`H` 键 / `O` 键 / `0` 键 (回上电姿态 Home)**：
-  - 各关节安全同步运动至上电全零姿态（`[0°, 0°, 0°, 0°, 0°, 0°]`），速度 **100.0 RPM** 同步。
+  - 各关节安全同步运动至上电全零姿态（`[0°, 0°, 0°, 0°, 0°, 0°]`）。
 - **`Y` 键 (E-Stop 紧急制动)**：
-  - 立即向 CAN 总线广播 `0x0000 0xFE` 抱闸停机，状态机切入 `STOPPED` 保护。
+  - 立即向 CAN 总线广播抱闸停机，切入 `STOPPED` 保护状态（按 `SPACE` 或 `R` 可尝试复位）。
 - **`Q` 键 / `ESC` 键 (安全退出)**：
-  - 停止发送速度，平稳断开连接并保存当前录制数据后安全退出。
-
-### 4.4 画面 UI 与丰富图元反馈
-
-OpenCV 视频窗口实时呈现多维视觉指示：
-1. **顶部状态横幅**：
-   - 🟢 **绿色 `[TELEOP ACTIVE]`**：遥操已接合，实时响应人手相对速度；
-   - 🟡 **黄色 `[CLUTCH PAUSED]`**：离合断开暂停中，提示按 `SPACE` 重新接合；
-2. **手腕锚点与速度矢量线**：
-   - 手腕处标记实时圆环（接合为绿色，离合为橙色）；
-   - 根据人手当前相对速度实时绘制**动态蓝色牵引箭头**，直观显示机械臂末端运动方向与速度大小。
+  - 停止发送速度，断开连接并保存当前录制数据后退出。
 
 ---
 
-## 5. 安全机制说明
+### 5.3 画面 UI 与 HUD 仪表盘
 
-1. **显式使能门禁 (Explicit Arm Gate)**：
-   - 启动时 `connect()` 仅建立连接并校验 6 轴电机通信不变式，停留在 `SAFE_IDLE` 状态（不产生力矩）。
-   - 只有用户通过命令行参数 `-y` 显式确认后，才会进入 `ARMED` 并过渡到 `TELEOP`。
-2. **分级视觉看门狗 (Vision Watchdog)**：
-   - **`OK`**（手部存在且置信度正常）：正常执行 6DOF 速度跟随。
-   - **`DECAY`**（手部短暂离开或深度短暂抖动 $<0.4s$）：线速度与角速度指数级平滑衰减至 0（禁止无脑保持上一帧速度）。
-   - **`STOP`**（手部持续丢失 $>0.4s$ 或手腕跳变 $>150mm$）：速度立即归零。
-   - **`ESTOP`**（手部完全丢失 $>1.0s$）：直接触发紧急停机。
-3. **控制层单调看门狗**：
-   - 控制器周期性检查 `cmd_ts`，若超过 250ms 未收到新视觉指令，立即将笛卡尔命令强制归零，防止进程阻塞或网络卡顿造成失控。
-4. **工作空间与关节限位预测**：
-   - 工作空间被限制在安全长方体盒内（$X \in [-300, 300]$, $Y \in [-300, 300]$, $Z \in [0, 400]$ mm）。
-   - 接近单轴软限位边缘时，自动按剩余安全边际比例渐进降速（Limit Deceleration Scaling）。
+OpenCV 窗口提供丰富工业级视觉反馈：
 
----
-
-## 6. 无硬件/离线验证命令
-
-在没有实体机械臂或相机的环境下，可通过以下命令测试整套控制管线与算法闭环：
-
-### 6.1 运行单元测试（无硬件/Mock）
-```bash
-# 测试视觉看门狗分级逻辑
-uv run python scripts/teleop/test_watchdog.py
-
-# 测试 Adapter 接口与安全性
-uv run python scripts/teleop/test_adapter.py
-
-# 测试遥操管线 run_once (无相机纯逻辑驱动)
-uv run python scripts/teleop/test_real_arm_teleop.py
 ```
-
-### 6.2 运行 6DOF 仿真全栈闭环回归
-```bash
-# 启动 FakeMuJoCoServer 验证 6DOF 位姿积分与闭环响应
-uv run python scripts/teleop/test_sim_regression.py
+┌─────────────────────────────────────────────────────────────┐
+│ [TELEOP ACTIVE] SPACE: Pause | R: Ready | H: Home | Y: E-Stop│
+├────────────────────────────────┬────────────────────────────┤
+│ Action: OK | Phase: TELEOP      │ [ALL STATUS - 6 JOINTS]    │
+│ v_lin: [+12.5,  -4.2,  +8.0]   │ Jnt CAN  Pos(deg) Cur Flag │
+│ w_ang: [ +0.00, +0.12, -0.05]  │ J1  0x02  +0.0°   0mA 0x00 │
+│ Joystick Tilt: dPitch / dRoll  │ J2  0x03 +60.0° 120mA 0x00 │
+│                                │ J3  0x04 +50.0°  85mA 0x00 │
+│   ● 手腕锚点 + 动态速度牵引线   │ J4  0x05  +0.0°   0mA 0x00 │
+│                                │ J5  0x06+120.0° 110mA 0x00 │
+│                                │ J6  0x07  +0.0°   0mA 0x00 │
+└────────────────────────────────┴────────────────────────────┘
 ```
 
 ---
 
-## 7. 常见问题排查 (Troubleshooting)
+## 6. 安全保护与看门狗机制
 
-### Q1: 运行报错 `OSError: [Errno 19] No such device`
-- **原因**：SocketCAN `can0` 尚未创建或未启动。
-- **解决**：检查 USB-CAN 是否插好，执行 `sudo ip link set can0 type can bitrate 500000 && sudo ip link set can0 up`。
+1. **四级视觉看门狗 (`watchdog.py`)**：
+   - **`OK`**：手部正常追踪，速度全额下发；
+   - **`DECAY`**（短暂丢帧 $<0.4s$）：速度指数平滑衰减，维持 3 帧时域惯性缓冲，防电机顿挫；
+   - **`STOP`**（手部丢失 $>0.4s$ 或位置跳变 $>150mm$）：速度立即归零；
+   - **`ESTOP`**（完全丢失 $>1.0s$）：直接触发急停停机。
+2. **控制层单调看门狗**：
+   - 超过 250ms 无有效视觉新帧，自动强制归零，防止进程阻塞或网络掉包。
+3. **软硬件多重限幅**：
+   - 末端线速度硬截断：$|v| \le 80\text{ mm/s}$（电机转速 $\le 113\text{ RPM}$）；
+   - 末端角速度硬截断：$|\omega| \le 0.8\text{ rad/s}$（输出角速度 $\le 45.8^\circ/\text{s}$）；
+   - 单控制周期最大关节角变：$|\Delta q| \le 2.0^\circ$。
 
-### Q2: 提示 `遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3)`
-- **原因**：为了防止误触直接使能电机导致重力下坠，必须传入 `-y` 参数。
-- **解决**：在命令末尾加上 `-y`。
+---
 
-### Q3: 提示 `未检测到 RealSense (D455) 相机`
-- **原因**：USB 接口松动或相机未被识别。
-- **解决**：检查 `rs-enumerate-devices`，确保使用 USB 3.0 接口连接相机。
+## 7. 自动化测试套件
 
-### Q4: 画面卡顿或机械臂动作迟滞
-- **原因**：MediaPipe 手部识别计算占用过高或 CAN 发送频率受阻。
-- **解决**：降低输入图像分辨率，或使用 `--no-drive` 排查纯视觉帧率是否稳定在 30fps。
+在没有实体硬件时，可执行以下命令验证全部 44 项单元测试：
+
+```bash
+PYTHONPATH=. pytest scripts/teleop/
+```
+*测试覆盖内容*：
+- `test_adapter.py`: Real / Simulation 统一适配器接口与状态机验证；
+- `test_arm_client.py`: 驱动器网络通信与协议打包；
+- `test_handeye_calib.py`: 手眼 SVD Procrustes 算法与欧拉角转换；
+- `test_real_arm_teleop.py`: 离合器、死区、按键与多模态录制链路；
+- `test_sim_regression.py`: 6DOF 空间运动位姿闭环回归；
+- `test_watchdog.py`: 视觉看门狗四级状态转移与衰减测试。
+
+---
+
+## 8. 常见故障排查 (Troubleshooting)
+
+### Q1: 运行提示 `ModuleNotFoundError: No module named 'can'`
+- **解决**：在当前 Python 环境安装依赖 `pip install python-can`。
+
+### Q2: 报错 `timeout addr=02 func=36` 或 `[Errno 105] 没有可用的缓冲区空间`
+- **原因**：电机动力电源未开启，或 USB-CAN 的 CAN-H / CAN-L 接线断开，导致报文无法收到硬件 ACK。
+- **解决**：检查 24V/48V 电机供电及 CAN 接线，确保终端电阻（120Ω）正常。
+
+### Q3: 画面显示为绿色 `[TELEOP ACTIVE]`，但手移动时速度一直为 0
+- **原因**：检查是否由于环境光照过暗导致 RealSense 丢失深度（画面中手腕圆环变红/灰）。
+- **解决**：确保手部在相机前 60~80cm 范围，且室内光线均匀无强逆光。
+
+### Q4: 机械臂动作方向与人手直觉相反（如手向前但臂向后）
+- **解决**：运行 `python scripts/teleop/handeye_calib.py` 重新完成一次 30 秒手眼标定。

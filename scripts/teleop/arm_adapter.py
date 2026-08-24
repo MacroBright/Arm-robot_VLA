@@ -50,6 +50,9 @@ class SimulationArmAdapter:
     def e_stop(self) -> None:
         self._arm.e_stop()
 
+    def state(self) -> str:
+        return "TELEOP"
+
 
 class RealArmAdapter:
     """真机臂: 封装 CartesianController (spec §6.1). 不直接操作 CAN/IK.

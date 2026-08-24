@@ -191,6 +191,31 @@ class ZdtController:
         self._last_io_s = time.monotonic()
         return angles, [0.0] * len(angles), loads
 
+    def get_real_state(self) -> dict:
+        """0x36 真实观测 (spec §5.3): {q, velocity, current, flags, status}.
+
+        q = 真实输出角 (anchor, use_kb=True); velocity = 低通有限差分 dq
+        (vel_filter_alpha, 驱动器 0x35 实时速度留待后续); current/flags 逐轴.
+        """
+        q = self.read_real_angles(use_kb=True)
+        now = time.monotonic()
+        dq = [0.0] * len(q)
+        if self._last_real_q is not None and self._last_real_ts is not None:
+            dt = max(1e-3, now - self._last_real_ts)
+            raw = [(q[i] - self._last_real_q[i]) / dt for i in range(len(q))]
+            alpha = self.config.vel_filter_alpha
+            self._vel = [alpha * raw[i] + (1.0 - alpha) * self._vel[i]
+                         for i in range(len(q))]
+            dq = list(self._vel)
+        else:
+            self._vel = [0.0] * len(q)
+        self._last_real_q = list(q)
+        self._last_real_ts = now
+        currents = [self._driver.read_current(addr) for addr in self.config.joint_addrs]
+        flags = [self._driver.read_flag(addr) for addr in self.config.joint_addrs]
+        return {"q": list(q), "velocity": dq, "current": currents,
+                "flags": flags, "status": self.robot.phase.name}
+
     def set_joints(self, angles: list[float]) -> None:
         """目标输出角度 → clamp → 相对跟踪值最短路径 → 0xFD 运动.
 

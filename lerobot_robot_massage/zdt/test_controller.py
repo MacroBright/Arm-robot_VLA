@@ -710,5 +710,48 @@ def test_connect_enumeration_failure_cleans_up():
     assert ctrl.robot.phase == RobotPhase.FAULT        # 闩锁 FAULT, 禁止 arm
 
 
+def test_get_real_state_fields():
+    ctrl, t = _mk()
+    _mk_armed(ctrl)
+    # 注入顺序必须匹配读取顺序: 全 q (0x36) → 全 current (0x27) → 全 flags (0x3A)
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x3A, b"\x01\x6b")
+    st = ctrl.get_real_state()
+    assert set(st) == {"q", "velocity", "current", "flags", "status"}
+    assert len(st["q"]) == 6 and len(st["velocity"]) == 6
+    assert len(st["current"]) == 6 and len(st["flags"]) == 6
+    assert st["status"] == "ARMED"
+
+
+def test_get_real_state_velocity_filters():
+    # 两次读取不同真实角 → 滤波有限差分 dq 非零
+    ctrl, t = _mk()
+    _mk_armed(ctrl)
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x3A, b"\x01\x6b")
+    st0 = ctrl.get_real_state()
+    assert all(v == 0.0 for v in st0["velocity"])   # 首帧无差分
+    # 第二帧: q 前进 1°
+    for addr, deg in zip(ctrl.config.joint_addrs, [1.0] * 6):
+        v = int(round(abs(deg) * 65536.0 / 360.0)) & 0xFFFFFFFF
+        t.inject(addr, F_READ_POS, bytes([0x00, (v >> 24) & 0xFF,
+                                          (v >> 16) & 0xFF, (v >> 8) & 0xFF,
+                                          v & 0xFF]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x27, b"\x00" + bytes([50]) + b"\x6b")
+    for addr in ctrl.config.joint_addrs:
+        t.inject(addr, 0x3A, b"\x01\x6b")
+    st1 = ctrl.get_real_state()
+    assert any(abs(v) > 0.0 for v in st1["velocity"])   # 差分后非零
+
+
 if __name__ == "__main__":
     run_all(globals())

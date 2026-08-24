@@ -503,7 +503,7 @@ git -C Arm-robot_VLA commit -m "feat(zdt): log_so3 近0/近π稳健 + 归一化�
 
 **Interfaces:**
 - Produces:
-  - `BoxWorkspace(xyz_min, xyz_max)` — `contains(xyz) -> bool`；`clamp(xyz) -> np.ndarray`；`scale_velocity(pos, vel, dt) -> tuple[np.ndarray, list[int]]`
+  - `BoxWorkspace(xyz_min, xyz_max)` — `contains(xyz) -> bool`；`clamp(xyz) -> np.ndarray`；`scale_velocity(vel, pos, dt) -> tuple[np.ndarray, list[int]]`（**velocity 在前**，与 `CartesianVelocityLimiter.__call__(vel, pos, dt)` 同序）
   - `CartesianVelocityLimiter(max_vel_mm_s, workspace: BoxWorkspace | None = None)` — `__call__(vel, pos, dt) -> tuple[np.ndarray, list[int]]`
 
 - [ ] **Step 1: 写失败测试**
@@ -644,17 +644,18 @@ class BoxWorkspace:
     def clamp(self, xyz) -> np.ndarray:
         return np.clip(np.asarray(xyz, dtype=float), self.min, self.max)
 
-    def scale_velocity(self, pos, vel, dt):
+    def scale_velocity(self, vel, pos, dt):
         """p_des = pos + vel·dt 越盒 → 该分量缩到盒边界 (至多到墙).
 
+        ⚠ 参数顺序: (vel, pos, dt) — 与 CartesianVelocityLimiter.__call__ 同序.
         纪律: 只缩放/拒绝, 绝不放大, 也绝不自动纠偏 —
           盒内: 朝外越界分量缩到墙 (至多到墙), 朝内放行;
           盒外 (已越界): 朝内放行, 朝外/静止 → 该轴速度置 0 并标记 clamped
                          (静止时调用方据此拒绝整条命令).
         Returns (v_scaled, clamped_axes).
         """
-        p = np.asarray(pos, dtype=float)
         v = np.asarray(vel, dtype=float)
+        p = np.asarray(pos, dtype=float)
         dt = float(dt)
         v_out = v.copy()
         clamped: list[int] = []
@@ -695,7 +696,7 @@ class CartesianVelocityLimiter:
             v = v * (self.max_vel / n)
         clamped: list[int] = []
         if self.workspace is not None:
-            v, clamped = self.workspace.scale_velocity(pos, v, dt)
+            v, clamped = self.workspace.scale_velocity(v, pos, dt)
         return v, clamped
 ```
 

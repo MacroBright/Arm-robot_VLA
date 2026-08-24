@@ -130,6 +130,54 @@ def test_key_ready_and_home():
     rec.finish_episode()
 
 
+def test_key_space_toggle_clutch():
+    adapter = _FakeAdapter()
+    wd = VisionWatchdog()
+    rec = EpisodeRecorder(_out("key_space"))
+    rec.start_episode()
+    # Initial state: clutch active -> move works
+    teleop = RealArmTeleop(adapter, wd, rec, hand_provider=lambda: _hand(),
+                           key_provider=lambda: None)
+    out1 = teleop.run_once(cmd_ts=0.1, now=0.15)
+    assert out1["clutch"] is True
+    assert adapter.calls and adapter.calls[-1][0] == "move"
+
+    # Press SPACE -> Toggle to PAUSED
+    teleop.key_provider = lambda: 32
+    out2 = teleop.run_once(cmd_ts=0.2, now=0.25)
+    assert out2["action"] == "PAUSED"
+    assert out2["clutch"] is False
+
+    # Next frame with no key: stays PAUSED, no new move calls
+    teleop.key_provider = lambda: None
+    calls_before = len(adapter.calls)
+    out3 = teleop.run_once(cmd_ts=0.3, now=0.35)
+    assert out3["action"] == "PAUSED"
+    assert len(adapter.calls) == calls_before
+
+    # Press SPACE again -> Toggle back to ACTIVE (with ramp-up)
+    teleop.key_provider = lambda: 32
+    out4 = teleop.run_once(cmd_ts=0.4, now=0.45)
+    assert out4["clutch"] is True
+    rec.finish_episode()
+
+
+def test_deadband_and_ramp_up():
+    adapter = _FakeAdapter()
+    wd = VisionWatchdog()
+    rec = EpisodeRecorder(_out("deadband"))
+    rec.start_episode()
+    # hand with small tremor velocity (1.0 mm/s < 3.0 mm/s deadband)
+    teleop = RealArmTeleop(adapter, wd, rec,
+                           hand_provider=lambda: _hand(velocity=(1.0, 0.0, 0.0)),
+                           key_provider=lambda: None,
+                           deadband_mm_s=3.0)
+    out = teleop.run_once(cmd_ts=0.1, now=0.15)
+    # Velocity clamped to zero by deadband
+    assert list(adapter.calls[-1][1].linear_velocity) == [0.0, 0.0, 0.0]
+    rec.finish_episode()
+
+
 def test_recorder_gets_records():
     adapter = _FakeAdapter()
     wd = VisionWatchdog()

@@ -25,7 +25,15 @@ class FakeTransport(CanTransport):
         self.sent.append(frame)
 
     def recv(self, timeout_s: float) -> Optional[CanFrame]:
-        if self.responses:
+        if not self.responses:
+            return None
+        if not self.sent:
+            return self.responses.pop(0)
+        target_addr = self.sent[-1].arbitration_id >> 8
+        first = self.responses[0]
+        r_addr = first.arbitration_id >> 8
+        is_arrived = bool(first.data and first.data[0] == 0xFD)
+        if target_addr == 0 or r_addr == 0 or r_addr == target_addr or is_arrived:
             return self.responses.pop(0)
         return None
 

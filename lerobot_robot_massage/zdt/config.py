@@ -5,6 +5,7 @@
   数据段    = [功能码, 参数..., 0x6B]
   参数 >7 字节 → 拆多帧, 每帧重复功能码
 """
+from typing import Optional
 from dataclasses import dataclass, field
 
 # 关节→CAN 地址 (J1→02 ... J6→07), 帧 ID 高字节
@@ -126,3 +127,20 @@ class ZdtConfig:
     # 与 interactive `anchor` / zdt_anchor.py 结论一致. 测试可传 [(1.0, 0.0)]*6
     # 保持 1:1 直观换算; None = 退化为纯减速比 (未标定参考).
     calib: list = field(default_factory=lambda: list(CALIB))
+
+    # ── 遥操/笛卡尔 (2026-08-23, spec §4) ──
+    max_vel_mm_s: float = 20.0
+    max_ang_rad_s: float = 1.0
+    max_joint_vel_deg_s: float = 60.0
+    max_joint_acc_deg_s2: float = 200.0
+    joint_limit_margin_deg: float = 2.0
+    kp_pos: float = 2.0
+    kr_ori: float = 2.0
+    ik_near_ratio: float = 0.3
+    ik_sing_ratio: float = 0.1
+    workspace_min: Optional[list] = None      # None = 不启用盒约束 (待真机标定)
+    workspace_max: Optional[list] = None
+    dt_min_factor: float = 0.5
+    dt_max_factor: float = 3.0
+    stale_cmd_max_s: float = 0.25
+    vel_filter_alpha: float = 0.2

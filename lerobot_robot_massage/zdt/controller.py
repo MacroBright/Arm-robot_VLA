@@ -9,6 +9,8 @@ from typing import Optional
 
 from .can_transport import CanTransport
 from .config import JOINT_INIT_ANGLE_DEG, READY_POSE_DEG, READY_SPEED_RPM, ZdtConfig
+from .safety import MotorState, RobotPhase, RobotStateMachine, SafetyError, verify_enumeration
+from .scan import scan_via_driver
 from .zdt_driver import (
     CommunicationError, ZdtDriver, ZdtDriverError,
 )
@@ -32,6 +34,11 @@ class ZdtController:
         # (本机寄存器刻度与物理输出不成固定比例, 回读标定已证明不可靠;
         #  固件 robot.c 亦用 g_robot.joints.current_angle 命令积分跟踪)
         self._tracked_angles: list[float] = [0.0] * len(self.config.joint_addrs)
+        self.robot = RobotStateMachine()
+        self._last_scan = None
+        self._last_real_q: Optional[list[float]] = None
+        self._last_real_ts: Optional[float] = None
+        self._vel = [0.0] * len(self.config.joint_addrs)
 
     # ── 连接生命周期 ─────────────────────────────────────
 
@@ -42,12 +49,14 @@ class ZdtController:
                                                  self.config.bitrate)
         try:
             self._transport.open()
-            self._driver = ZdtDriver(self._transport, timeout_s=self.config.timeout_s,
+            self._driver = ZdtDriver(self._transport,
+                                     timeout_s=self.config.timeout_s,
                                      retries=self.config.retries)
-            self.set_torque(True)
-            # 初始对齐: 读一次寄存器作为跟踪起点 (输出角度); 之后纯命令积分.
-            # 仅作初值参考 — 正式对齐应以 zero() 在机械零位触发.
-            self.sync()
+            self.robot = RobotStateMachine()          # 新连接 = 新生命周期
+            self.robot.on_connected()
+            self._scan_and_verify()                   # 枚举 + 硬不变式
+            self.sync()                               # 读 0x36 对齐 tracked
+            self.robot.on_safe_idle()
         except Exception:
             # 失败清理: 已使能的轴先急停 (best-effort), 再关总线; _connected 保持 False
             self._connected = False
@@ -65,6 +74,25 @@ class ZdtController:
         self._last_io_s = time.monotonic()
         logger.info("ZDT CAN connected: %s (6 drives verified)", self.config.channel)
 
+    def _scan_and_verify(self) -> None:
+        """扫描 + 枚举硬不变式 (修订 #6). 任一违例 → fault 闩锁 + 抛 SafetyError."""
+        scan = scan_via_driver(self._driver, timeout_s=self.config.timeout_s,
+                               retries=0)
+        self._last_scan = scan
+        problems = verify_enumeration(scan.found)
+        if problems:
+            self.robot.fault("枚举失败: " + "; ".join(problems))
+            raise SafetyError("枚举失败, 进入 FAULT: " + "; ".join(problems))
+        self.robot.on_enumerated(scan.found)
+        # 采纳实际发现的寻址方案 (firmware 1..6 / pc 2..7), 后续 IO 用真实地址
+        slot_addrs = [None] * 6
+        for cid, m in scan.found.items():
+            if m.joint_slot is not None:
+                slot_addrs[m.joint_slot] = cid
+        if any(a is None for a in slot_addrs):
+            raise SafetyError("枚举后关节槽地址不完整")   # 理论不可达 (verify 已拦)
+        self.config.joint_addrs = list(slot_addrs)
+
     def sync(self) -> None:
         """从硬件寄存器重新对齐跟踪值 (真实输出角度 = 0x36 pos 经 CALIB (k,b) 换算).
 
@@ -78,6 +106,47 @@ class ZdtController:
                                        if kb is not None and abs(kb[0]) > 1e-9
                                        else pos_raw / self.config.reduction_ratios[i])
         self._last_io_s = time.monotonic()
+
+    def arm(self, gravity_confirmed: bool = False) -> None:
+        """SAFE_IDLE → 使能扭矩 → ARMED. 重力关节 J2/J3 需二次确认."""
+        self.robot.arm(gravity_confirmed)             # 门禁 + 重力确认 (无 IO)
+        try:
+            self.set_torque(True)
+        except Exception:
+            self.robot.disarm()                       # 使能失败回滚到 SAFE_IDLE
+            raise
+
+    def disarm(self) -> None:
+        try:
+            self.set_torque(False)
+        finally:
+            self.robot.disarm()
+
+    def enter_teleop(self) -> None:
+        self.robot.enter_teleop()
+
+    def exit_teleop(self) -> None:
+        self.robot.exit_teleop()
+
+    def fault(self, reason: str) -> None:
+        self.robot.fault(reason)
+
+    def re_arm(self, confirmed: bool = False) -> None:
+        """STOPPED/FAULT → 重枚举验证 → SAFE_IDLE. 需显式确认."""
+        scan = scan_via_driver(self._driver, timeout_s=self.config.timeout_s,
+                               retries=0)
+        problems = verify_enumeration(scan.found)
+        if problems:
+            self.robot.fault("重枚举失败: " + "; ".join(problems))
+            raise SafetyError("重枚举失败: " + "; ".join(problems))
+        self.robot.re_arm(confirmed)
+        slot_addrs = [None] * 6
+        for cid, m in scan.found.items():
+            if m.joint_slot is not None:
+                slot_addrs[m.joint_slot] = cid
+        self.config.joint_addrs = list(slot_addrs)
+        self.sync()
+        self.robot.on_safe_idle()
 
     def disconnect(self) -> None:
         if self._transport is not None:
@@ -148,6 +217,7 @@ class ZdtController:
 
     def e_stop(self) -> None:
         self._driver.stop_all()
+        self.robot.e_stop()                            # 闩锁 STOPPED
         self._last_io_s = time.monotonic()
         logger.warning("EMERGENCY STOP broadcast")
 

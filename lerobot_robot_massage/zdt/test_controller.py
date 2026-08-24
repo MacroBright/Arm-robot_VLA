@@ -11,6 +11,9 @@ from lerobot_robot_massage.zdt.fakes import (
     FakeTransport,
 )
 from lerobot_robot_massage.zdt.testutil import run_all
+from lerobot_robot_massage.zdt.safety import (
+    MotorState, RobotPhase, SafetyError,
+)
 from lerobot_robot_massage.zdt.zdt_driver import (
     CommunicationError, ZdtDriverError,
 )
@@ -214,7 +217,7 @@ def test_connect_failure_estop_and_close():
     try:
         ctrl.connect()
         raise AssertionError("connect 应抛错")
-    except ZdtDriverError:
+    except (ZdtDriverError, SafetyError):
         pass
     # e_stop 广播帧 (addr=0x00, 停止命令)
     assert t.sent[-1].arbitration_id == 0x0000
@@ -605,6 +608,106 @@ def test_check_limits_real_use_kb_conversion():
                                     use_kb=True, calib_kb=kb)
     assert _sent_stop(t, 0x03)
     assert any(a["slot"] == 1 for a in alarms)
+
+
+# ── 2026-08-23: connect 生命周期 (scan/verify + 状态机) ─────
+
+def _mk_armed(ctrl):
+    """把注入式 ZdtController 的状态机直接推进到 ARMED (纯状态, 无 CAN)."""
+    ctrl.robot.on_connected()
+    motors = {a: MotorState(can_id=a, online=True, joint_slot=i)
+              for i, a in enumerate(ctrl.config.joint_addrs)}
+    ctrl.robot.on_enumerated(motors)
+    ctrl.robot.on_safe_idle()
+    ctrl.robot.arm(gravity_confirmed=True)
+    return ctrl
+
+
+def test_connect_scan_verify_reaches_safe_idle():
+    t = FakeTransport()
+    cfg = ZdtConfig(timeout_s=0.001, retries=0, reduction_ratios=[1.0] * 6,
+                    calib=[(1.0, 0.0)] * 6)
+    ctrl = ZdtController(config=cfg, transport=t)
+    for addr in range(0x01, 0x07):                       # firmware scheme
+        t.inject(addr, 0x1F, bytes([0x00, 0x01, 0x01]) + b"\x6b")
+    for addr in range(0x01, 0x07):                       # sync 读 0x36
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    ctrl.connect()
+    assert ctrl.robot.phase == RobotPhase.SAFE_IDLE
+    assert ctrl._connected is True
+    assert ctrl.config.joint_addrs == [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]
+
+
+def test_connect_enumeration_failure_latches_fault():
+    # 只探测到 5 台 → 缺 J6 → 硬不变式 → FAULT + 抛 SafetyError + 不使能扭矩
+    t = FakeTransport()
+    cfg = ZdtConfig(timeout_s=0.001, retries=0, reduction_ratios=[1.0] * 6,
+                    calib=[(1.0, 0.0)] * 6)
+    ctrl = ZdtController(config=cfg, transport=t)
+    for addr in range(0x01, 0x06):
+        t.inject(addr, 0x1F, bytes([0x00, 0x01, 0x01]) + b"\x6b")
+    try:
+        ctrl.connect()
+        raise AssertionError("枚举失败应抛 SafetyError")
+    except SafetyError:
+        pass
+    assert ctrl.robot.phase == RobotPhase.FAULT
+    assert ctrl.robot.fault_reason
+    assert ctrl._connected is False
+    assert not any(f.data and f.data[0] == 0xF3 for f in t.sent)   # 未使能扭矩
+
+
+def test_connect_no_longer_enables_torque():
+    # 修订: connect 不再 set_torque(True); arm() 才使能
+    t = FakeTransport()
+    cfg = ZdtConfig(timeout_s=0.001, retries=0, reduction_ratios=[1.0] * 6,
+                    calib=[(1.0, 0.0)] * 6)
+    ctrl = ZdtController(config=cfg, transport=t)
+    for addr in range(0x01, 0x07):
+        t.inject(addr, 0x1F, bytes([0x00, 0x01, 0x01]) + b"\x6b")
+    for addr in range(0x01, 0x07):
+        t.inject(addr, F_READ_POS, b"\x00\x00\x00\x00\x00" + b"\x6b")
+    ctrl.connect()
+    assert not any(f.data and f.data[0] == 0xF3 for f in t.sent)
+    ctrl.arm(gravity_confirmed=True)
+    assert ctrl.robot.phase == RobotPhase.ARMED
+    assert any(f.data and f.data[0] == 0xF3 for f in t.sent)
+
+
+def test_arm_requires_safe_idle():
+    ctrl, t = _mk()
+    try:
+        ctrl.arm(gravity_confirmed=True)
+        raise AssertionError("DISCONNECTED 不应能 arm")
+    except SafetyError:
+        pass
+
+
+def test_disarm_disables_torque_and_returns_safe_idle():
+    ctrl, t = _mk()
+    _mk_armed(ctrl)
+    ctrl.disarm()
+    assert ctrl.robot.phase == RobotPhase.SAFE_IDLE
+    assert any(f.data and f.data[0] == 0xF3 and len(f.data) > 2 and f.data[2] == 0x00
+               for f in t.sent)
+
+
+def test_connect_enumeration_failure_cleans_up():
+    # 无任何回帧 → 扫描全空 → 硬不变式失败 → SafetyError + FAULT + 清理
+    # (read_version 吞掉 TransportError, 总线失败表现为"枚举失败"; e_stop 广播 + close)
+    t = FakeTransport()
+    cfg = ZdtConfig(timeout_s=0.001, retries=0, reduction_ratios=[1.0] * 6,
+                    calib=[(1.0, 0.0)] * 6)
+    ctrl = ZdtController(config=cfg, transport=t)
+    try:
+        ctrl.connect()
+        raise AssertionError("connect 应抛 SafetyError")
+    except SafetyError:
+        pass
+    assert t.sent[-1].arbitration_id == 0x0000        # e_stop 广播
+    assert t.closed is True
+    assert ctrl._connected is False
+    assert ctrl.robot.phase == RobotPhase.FAULT        # 闩锁 FAULT, 禁止 arm
 
 
 if __name__ == "__main__":

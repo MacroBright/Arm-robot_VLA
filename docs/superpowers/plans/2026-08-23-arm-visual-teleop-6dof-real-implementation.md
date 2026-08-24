@@ -863,11 +863,14 @@ def test_assert_armed_gates():
     sm.assert_armed()
     sm.enter_teleop()
     sm.assert_armed()      # TELEOP 也算 armed
+    sm.exit_teleop()       # 回到 ARMED 才能正确测 "非 TELEOP"
     try:
-        sm.assert_teleop()  # 非 TELEOP
+        sm.assert_teleop()  # 非 TELEOP → 拒绝
         raise AssertionError("ARMED 不应通过 assert_teleop")
     except SafetyError:
         pass
+    sm.enter_teleop()
+    sm.assert_teleop()     # TELEOP 通过
 
 
 def test_verify_enumeration_ok():

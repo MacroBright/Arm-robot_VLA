@@ -257,3 +257,135 @@ class SafetyMachine:
         if m.joint_slot is None:
             raise SafetyError(f"电机 0x{m.can_id:02X} 未映射到关节槽 (先枚举裁决 scheme)")
         return JOINTS[m.joint_slot]
+
+
+# ── 整臂生命周期状态机 (2026-08-23, spec §5.1) ─────────────
+
+class RobotPhase(Enum):
+    """整臂生命周期门禁 (与 SafetyMachine 的单电机枚举互补, 不合并)."""
+    DISCONNECTED = auto()
+    CONNECTED = auto()
+    ENUMERATED = auto()
+    SAFE_IDLE = auto()
+    ARMED = auto()
+    TELEOP = auto()
+    FAULT = auto()
+    STOPPED = auto()
+
+
+class RobotStateMachine:
+    """整臂门禁: connect→enumerate→safe_idle→arm→teleop; e_stop/fault 闩锁.
+
+    枚举硬不变式 (修订 #6): on_enumerated 校验 6 轴在线 + 关节槽一一映射,
+    任一缺失/重复/未映射 → 抛 SafetyError → 调用方 fault() (禁止 ARM).
+    """
+
+    def __init__(self, num_joints: int = 6):
+        self.num_joints = num_joints
+        self._phase = RobotPhase.DISCONNECTED
+        self.fault_reason: str = ""
+
+    @property
+    def phase(self) -> RobotPhase:
+        return self._phase
+
+    def _require(self, *phases: RobotPhase) -> None:
+        if self._phase not in phases:
+            raise SafetyError(
+                f"非法状态转移: {self._phase.name} → 需 {'/'.join(p.name for p in phases)}")
+
+    def on_connected(self) -> None:
+        self._require(RobotPhase.DISCONNECTED)
+        self._phase = RobotPhase.CONNECTED
+
+    def on_enumerated(self, motors: dict[int, MotorState]) -> None:
+        """硬不变式: 校验通过才前进 ENUMERATED, 否则抛 SafetyError (不前进)."""
+        self._require(RobotPhase.CONNECTED)
+        problems = verify_enumeration(motors, self.num_joints)
+        if problems:
+            raise SafetyError("枚举不变式失败: " + "; ".join(problems))
+        self._phase = RobotPhase.ENUMERATED
+
+    def on_safe_idle(self) -> None:
+        self._require(RobotPhase.ENUMERATED)
+        self._phase = RobotPhase.SAFE_IDLE
+
+    def arm(self, gravity_confirmed: bool = False) -> None:
+        """SAFE_IDLE → ARMED. 重力关节 (J2/J3) 需显式二次确认."""
+        self._require(RobotPhase.SAFE_IDLE)
+        if not gravity_confirmed:
+            raise SafetyError("重力关节 J2/J3 需显式二次确认才可臂置")
+        self._phase = RobotPhase.ARMED
+
+    def enter_teleop(self) -> None:
+        self._require(RobotPhase.ARMED)
+        self._phase = RobotPhase.TELEOP
+
+    def exit_teleop(self) -> None:
+        self._require(RobotPhase.TELEOP)
+        self._phase = RobotPhase.ARMED
+
+    def disarm(self) -> None:
+        """ARMED/TELEOP → SAFE_IDLE (失能扭矩后回到安全待命)."""
+        self._require(RobotPhase.ARMED, RobotPhase.TELEOP)
+        self._phase = RobotPhase.SAFE_IDLE
+
+    def e_stop(self) -> None:
+        """* → STOPPED (闩锁). 幂等: 已处 FAULT/STOPPED 时不改写 (保留 FAULT 原因)."""
+        if self._phase not in (RobotPhase.FAULT, RobotPhase.STOPPED):
+            self._phase = RobotPhase.STOPPED
+
+    def fault(self, reason: str) -> None:
+        """* → FAULT (闩锁). 幂等; 安全效果等同 STOPPED; 恢复需 re_arm(confirmed)."""
+        if self._phase not in (RobotPhase.FAULT, RobotPhase.STOPPED):
+            self._phase = RobotPhase.FAULT
+            self.fault_reason = reason
+
+    def re_arm(self, confirmed: bool) -> None:
+        """STOPPED/FAULT → ENUMERATED, 需显式确认 (随后重新 on_safe_idle)."""
+        self._require(RobotPhase.STOPPED, RobotPhase.FAULT)
+        if not confirmed:
+            raise SafetyError("re_arm 需显式确认")
+        self._phase = RobotPhase.ENUMERATED
+
+    def assert_armed(self) -> None:
+        if self._phase not in (RobotPhase.ARMED, RobotPhase.TELEOP):
+            raise SafetyError(f"需 ARMED/TELEOP, 当前 {self._phase.name}")
+
+    def assert_teleop(self) -> None:
+        if self._phase != RobotPhase.TELEOP:
+            raise SafetyError(f"需 TELEOP, 当前 {self._phase.name}")
+
+
+def verify_enumeration(motors: dict[int, MotorState], num_joints: int = 6) -> list[str]:
+    """枚举硬不变式 (修订 #6): 全部 num_joints 在线 + 关节槽一一映射.
+
+    违例项 (任一存在 → 禁止 ARM):
+      * 电机数量 != num_joints
+      * 某电机不在线 / 未映射关节槽 (joint_slot is None)
+      * 某槽位缺失 (MISSING) / 多台映射到同一槽位 (重复)
+      * 槽位越界 (>= num_joints)
+
+    Returns:
+        list[str] 违例描述, 空列表 = 通过.
+    """
+    problems: list[str] = []
+    if len(motors) != num_joints:
+        problems.append(f"发现 {len(motors)} 台电机, 期望 {num_joints}")
+    slots: dict[int, list[int]] = {}
+    for cid, m in motors.items():
+        if not m.online:
+            problems.append(f"0x{cid:02X} 不在线")
+        if m.joint_slot is None:
+            problems.append(f"0x{cid:02X} 未映射关节槽")
+        else:
+            slots.setdefault(m.joint_slot, []).append(cid)
+    for s in range(num_joints):
+        if s not in slots:
+            problems.append(f"J{s + 1} MISSING")
+        elif len(slots[s]) > 1:
+            problems.append(f"J{s + 1} 重复映射 {slots[s]}")
+    for s, cids in sorted(slots.items()):
+        if s >= num_joints:
+            problems.append(f"关节槽 {s} 越界 ({cids})")
+    return problems

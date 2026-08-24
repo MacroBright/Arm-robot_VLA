@@ -197,3 +197,38 @@ def _assign_slots(found: dict[int, MotorState], slot_of) -> None:
         m.joint_slot = slot
         if 0 <= slot < len(JOINTS):
             m.tracked_deg = JOINTS[slot].init_deg
+
+
+# ── scan_via_driver: 用 ZdtDriver 探测枚举 (controller.connect 专用, 免 ZdtBus) ──
+
+def scan_via_driver(driver, id_range: Optional[tuple[int, int]] = None,
+                    timeout_s: Optional[float] = None,
+                    retries: Optional[int] = None) -> ScanResult:
+    """用 ZdtDriver 探测 (0x1F) 枚举 — controller.connect 专用, 免 ZdtBus.
+
+    与 scan_bus 同裁决/同槽映射逻辑, 但复用 driver 的同步请求原语 (不回绕
+    ZdtBus 的后台读线程), 避免与 ZdtDriver 的同步 recv 冲突.
+    """
+    lo, hi = id_range or DEFAULT_SCAN_RANGE
+    result = ScanResult()
+    for cid in range(lo, hi + 1):
+        if cid == 0:
+            continue
+        ver = driver.read_version(cid, timeout_s=timeout_s, retries=retries)
+        if ver is not None:
+            result.found[cid] = MotorState(can_id=cid, online=True, fw_ver=ver,
+                                           tracked_deg=0.0)
+    if not result.found:
+        result.scheme = None
+        result.warnings.append(
+            "总线无响应: 检查供电 / 波特率 / 驱动板 P_Serial=CAN1_MAP / "
+            "Response 非 None")
+        return result
+    scheme, warnings = resolve_scheme(set(result.found))
+    result.scheme = scheme
+    result.warnings = warnings
+    if scheme == "firmware":
+        _assign_slots(result.found, slot_of=lambda cid: cid - 1)
+    elif scheme == "pc":
+        _assign_slots(result.found, slot_of=lambda cid: cid - 2)
+    return result

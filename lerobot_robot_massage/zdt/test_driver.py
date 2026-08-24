@@ -173,5 +173,20 @@ def test_transport_error_carries_cause():
         assert isinstance(exc.__cause__, CanTransportError)
 
 
+# ── read_version (T5a) ──
+def test_read_version_returns_fw_hw():
+    t = FakeTransport()
+    drv = ZdtDriver(t, timeout_s=0.001, retries=0)
+    t.inject(0x02, 0x1F, bytes([0x02, 0x03]) + b"\x6b")   # fw=2, hw=3
+    ver = drv.read_version(0x02)
+    assert ver == (2, 3)
+
+
+def test_read_version_missing_motor_returns_none():
+    t = FakeTransport()
+    drv = ZdtDriver(t, timeout_s=0.001, retries=0)
+    assert drv.read_version(0x01) is None    # 无注入 → 超时
+
+
 if __name__ == "__main__":
     run_all(globals())

@@ -171,5 +171,21 @@ def test_scan_initializes_tracked_deg_to_joint_init():
         bus.close()
 
 
+# ── scan_via_driver (T5a) ──
+def test_scan_via_driver_firmware_scheme():
+    from lerobot_robot_massage.zdt.zdt_driver import ZdtDriver
+    from lerobot_robot_massage.zdt.fakes import FakeTransport
+    from lerobot_robot_massage.zdt.scan import scan_via_driver
+    t = FakeTransport()
+    drv = ZdtDriver(t, timeout_s=0.001, retries=0)
+    for addr in range(0x01, 0x07):
+        t.inject(addr, 0x1F, bytes([0x01, 0x01]) + b"\x6b")
+    res = scan_via_driver(drv, id_range=(1, 8))
+    assert res.scheme == "firmware"
+    assert len(res.found) == 6
+    assert res.found[0x01].joint_slot == 0
+    assert res.found[0x06].joint_slot == 5
+
+
 if __name__ == "__main__":
     run_all(globals())

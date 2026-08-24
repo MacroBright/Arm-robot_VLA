@@ -162,11 +162,18 @@ class ZdtDriver:
     # ── 内部: 发送 + 同步等回帧 + 重试 ─────────────────────
 
     def _request(self, addr: int, body: bytes,
-                 expect_response: bool) -> Optional[bytes]:
-        """发送 (加校验); 期待回帧时等待并返回数据段 (含功能码), 否则 None."""
+                 expect_response: bool,
+                 timeout_s: Optional[float] = None,
+                 retries: Optional[int] = None) -> Optional[bytes]:
+        """发送 (加校验); 期待回帧时等待并返回数据段 (含功能码), 否则 None.
+
+        timeout_s / retries 为 None 时使用 self 默认值 (向后兼容).
+        """
         payload = add_checksum(body)
         frames = encode_frame(addr, payload)
-        for attempt in range(self.retries + 1):
+        t_out = timeout_s if timeout_s is not None else self.timeout_s
+        r_retries = retries if retries is not None else self.retries
+        for attempt in range(r_retries + 1):
             for f in frames:
                 try:
                     self._t.send(f)
@@ -175,19 +182,24 @@ class ZdtDriver:
                         f"send 失败 addr={addr:#04x} func={payload[0]:#04x}") from exc
             if not expect_response:
                 return None
-            resp = self._recv_for(addr, payload[0])
+            resp = self._recv_for(addr, payload[0], timeout_s=t_out)
             if resp is not None:
                 return resp
             logger.warning("timeout addr=%02X func=%02X attempt=%d/%d",
-                           addr, payload[0], attempt, self.retries)
+                           addr, payload[0], attempt, r_retries)
         raise TimeoutError(f"addr={addr:#04x} func={payload[0]:#04x} 超时")
 
-    def _recv_for(self, addr: int, func: int) -> Optional[bytes]:
-        """在 deadline 内收帧, 找到 (addr,func) 匹配回帧则返回, 否则 None."""
-        deadline = time.monotonic() + self.timeout_s
+    def _recv_for(self, addr: int, func: int,
+                  timeout_s: Optional[float] = None) -> Optional[bytes]:
+        """在 deadline 内收帧, 找到 (addr,func) 匹配回帧则返回, 否则 None.
+
+        timeout_s 为 None 时使用 self 默认值 (向后兼容).
+        """
+        t_out = timeout_s if timeout_s is not None else self.timeout_s
+        deadline = time.monotonic() + t_out
         while time.monotonic() < deadline:
             try:
-                frame = self._t.recv(self.timeout_s)
+                frame = self._t.recv(t_out)
             except CanTransportError as exc:
                 raise TransportError(
                     f"recv 失败 addr={addr:#04x} func={func:#04x}") from exc
@@ -205,3 +217,18 @@ class ZdtDriver:
             if r_addr == addr and r_func == func:
                 return data
         return None
+
+    # ── 读版本 (枚举 gate) ──────────────────────────────────
+
+    def read_version(self, addr: int,
+                     timeout_s: Optional[float] = None,
+                     retries: Optional[int] = None) -> Optional[tuple[int, int]]:
+        """探测 0x1F 版本. 超时/无响应 → None (枚举时作为离线判定)."""
+        try:
+            data = self._request(addr, bytes([0x1F]), expect_response=True,
+                                 timeout_s=timeout_s, retries=retries)
+        except ZdtDriverError:
+            return None
+        if data is None or len(data) < 3:
+            return None
+        return data[1], data[2]

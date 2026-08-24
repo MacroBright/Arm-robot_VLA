@@ -71,9 +71,12 @@ def main() -> None:
             ctrl.tick()
             print(f"[reset] soft_reset → {JOINT_INIT_ANGLE_DEG}")
         elif args.cmd == "torque":
-            ctrl.set_torque(bool(args.state))
-            ctrl.tick()
-            print(f"[torque] {'使能' if args.state else '失能'}")
+            if args.state == 1:
+                ctrl.arm(gravity_confirmed=True)
+                print("[torque] 已臂置 (set_torque on + ARMED)")
+            else:
+                ctrl.disarm()
+                print("[torque] 已解除 (set_torque off + SAFE_IDLE)")
         elif args.cmd == "estop":
             ctrl.e_stop()
             ctrl.tick()

@@ -95,6 +95,10 @@ class MassageRobot(Robot):
         if self.config.transport != "can":
             logger.info("reset(): transport=%s 不支持自动 ready, 跳过", self.config.transport)
             return
+        if not self.config.gravity_confirm:
+            raise RuntimeError(
+                "reset() 需先显式确认重力关节 (config.gravity_confirm=True) 才能自动 ready")
+        self._protocol.arm(gravity_confirmed=True)   # connect 不再自动使能 → 显式 arm
         targets = self._protocol.ready()
         logger.info("reset() → 按摩准备姿态 %s", targets)
 
@@ -105,7 +109,7 @@ class MassageRobot(Robot):
 
         # Disable torque before disconnecting (safety)
         try:
-            self._protocol.set_torque(False)
+            self._protocol.disarm()
         except (SerialProtocolError, ZdtDriverError):
             pass
 

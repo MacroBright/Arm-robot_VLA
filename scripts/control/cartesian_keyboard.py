@@ -81,7 +81,11 @@ def _load_font(size: int) -> "pygame.font.Font":
 def _build_cartesian(iface: str) -> CartesianController:
     cfg = ZdtConfig(channel=iface, bitrate=500_000)
     ctrl = ZdtController(cfg)
-    ctrl.connect()                     # 使能 + 读一次真实角对齐 tracked
+    ctrl.connect()                                  # 枚举+验证 → SAFE_IDLE
+    _print_status(CartesianController(ctrl))        # 打印状态后要求显式臂置
+    print("[键盘遥操] 回车确认臂置 (重力关节 J2/J3 二次确认), 或 Ctrl-C 退出...")
+    input()
+    ctrl.arm(gravity_confirmed=True)                # 使能扭矩 → ARMED
     return CartesianController(ctrl, max_vel_mm_s=BASE_VEL, loop_hz=LOOP_HZ)
 
 

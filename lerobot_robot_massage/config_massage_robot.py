@@ -46,6 +46,7 @@ class MassageRobotConfig(RobotConfig):
     # 仅 transport=="can" 支持. 推理/评估部署开 True; 手动示教采集保持 False
     # (采集前人工摆位, 力矩关闭).
     move_to_ready_on_connect: bool = False
+    gravity_confirm: bool = False   # reset() 自动 ready 前需确认重力关节 (J2/J3)
 
     joint_names: list[str] = field(default_factory=lambda: [
         "shoulder_pan",    # Joint 1 — base rotation

@@ -38,8 +38,16 @@ class RealArmTeleop:
             self.adapter.e_stop()
             return {"action": "ESTOP", "cmd": self._cmd,
                     "phase": self.adapter.state()}
-        if key in (ord("q"), 27):
+        if key in (ord("q"), ord("Q"), 27):
             return {"action": "QUIT", "cmd": self._cmd,
+                    "phase": self.adapter.state()}
+        if key in (ord("r"), ord("R")):
+            self.adapter.ready()
+            return {"action": "READY", "cmd": CartesianCommand((0.0, 0.0, 0.0)),
+                    "phase": self.adapter.state()}
+        if key in (ord("o"), ord("O"), ord("0"), ord("h"), ord("H")):
+            self.adapter.home()
+            return {"action": "HOME", "cmd": CartesianCommand((0.0, 0.0, 0.0)),
                     "phase": self.adapter.state()}
 
         if (now - cmd_ts) > self.stale_cmd_max_s:
@@ -145,13 +153,15 @@ def main():
         return {"hand_present": True, "confidence": 0.9, "depth_valid": True,
                 "wrist_mm": tuple(float(v) for v in pts[0])}
 
+    curr_key = -1
+
     teleop = RealArmTeleop(adapter, watchdog, recorder, hand_provider,
-                           key_provider=lambda: 0)
-    # P0-①: connect → SAFE_IDLE → 显式 arm (已 -y 确认重力) → TELEOP → reset (实际运动)
+                           key_provider=lambda: curr_key)
+    # P0-①: connect → SAFE_IDLE → 显式 arm (已 -y 确认重力) → TELEOP → ready (初始准备位)
     adapter.connect()
     adapter.arm(gravity_confirmed=True)
     adapter.enter_teleop()
-    adapter.reset()
+    adapter.ready()
     recorder.start_episode()
     try:
         while True:
@@ -162,7 +172,12 @@ def main():
             if out["action"] == "ESTOP":
                 print("[急停] e_stop 已触发")
                 break
-            cv2.waitKey(1)
+            if out["action"] == "READY":
+                print("[姿态] 正在安全同步运动至按摩准备姿态 (READY)...")
+            elif out["action"] == "HOME":
+                print("[姿态] 正在安全同步运动至上电初始姿态 (HOME)...")
+            k = cv2.waitKey(1) & 0xFF
+            curr_key = k if k != 255 else -1
     finally:
         try:
             adapter.e_stop()

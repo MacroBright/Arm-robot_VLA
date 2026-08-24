@@ -44,8 +44,14 @@ class SimulationArmAdapter:
         # 仿真协议约定: end_event 输入按 mm/s + rad/s 解释 (回归测试同约定)
         self._arm.end_event(*cmd.twist)
 
-    def reset(self) -> None:
+    def ready(self) -> None:
         self._arm.soft_reset()
+
+    def home(self) -> None:
+        self._arm.soft_reset()
+
+    def reset(self) -> None:
+        self.ready()
 
     def e_stop(self) -> None:
         self._arm.e_stop()
@@ -106,8 +112,16 @@ class RealArmAdapter:
     def step_pose(self, p_des, R_des, **kw) -> None:
         self._cart.step_pose(p_des, R_des, **kw)
 
-    def reset(self) -> None:
+    def ready(self) -> None:
+        """安全运动至按摩准备姿态 (READY_POSE_DEG=[0,60,50,0,120,0]), 100 RPM 同步."""
         self._cart.ready()
+
+    def home(self) -> None:
+        """安全运动回上电初始姿态 (JOINT_INIT_ANGLE_DEG=[0,0,0,0,0,0]), 100 RPM 同步."""
+        self._cart.home()
+
+    def reset(self) -> None:
+        self.ready()
 
     def e_stop(self) -> None:
         self._ctrl.e_stop()

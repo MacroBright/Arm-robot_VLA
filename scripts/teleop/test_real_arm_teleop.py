@@ -16,10 +16,18 @@ class _FakeAdapter:
     def __init__(self):
         self.calls = []
         self.e_stop_calls = 0
+        self.ready_calls = 0
+        self.home_calls = 0
         self.phase = "ARMED"
 
     def move_cartesian_velocity(self, cmd: CartesianCommand):
         self.calls.append(("move", cmd))
+
+    def ready(self):
+        self.ready_calls += 1
+
+    def home(self):
+        self.home_calls += 1
 
     def e_stop(self):
         self.e_stop_calls += 1
@@ -98,6 +106,27 @@ def test_key_estop_immediate():
     out = teleop.run_once(cmd_ts=0.1, now=0.15)
     assert out["action"] == "ESTOP"
     assert adapter.e_stop_calls == 1
+    rec.finish_episode()
+
+
+def test_key_ready_and_home():
+    adapter = _FakeAdapter()
+    wd = VisionWatchdog()
+    rec = EpisodeRecorder(_out("key_poses"))
+    rec.start_episode()
+    # Test 'r' -> READY
+    teleop = RealArmTeleop(adapter, wd, rec, hand_provider=lambda: _hand(),
+                           key_provider=lambda: ord("r"))
+    out = teleop.run_once(cmd_ts=0.1, now=0.15)
+    assert out["action"] == "READY"
+    assert adapter.ready_calls == 1
+
+    # Test 'o' / 'h' -> HOME
+    teleop = RealArmTeleop(adapter, wd, rec, hand_provider=lambda: _hand(),
+                           key_provider=lambda: ord("h"))
+    out = teleop.run_once(cmd_ts=0.1, now=0.15)
+    assert out["action"] == "HOME"
+    assert adapter.home_calls == 1
     rec.finish_episode()
 
 

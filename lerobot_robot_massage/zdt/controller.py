@@ -555,10 +555,10 @@ class ZdtController:
         n = int(round(abs(delta_deg) * ratio * self.config.pulses_per_rev / 360))
         if n == 0:
             return False
-        # 动态速度映射: 确保电机在 35ms 内充沛完成本次脉冲数，不滞后、不积压
+        # 动态速度映射: 确保电机在 35ms 内充沛完成本次脉冲数，平稳顺滑、按需分配
         if speed_rpm is None:
             needed_rpm = (abs(delta_deg) * ratio / 360.0) / 0.035 * 60.0
-            spd = max(float(self.config.speed_rpm), min(3000.0, needed_rpm * 1.35))
+            spd = max(100.0, min(float(self.config.speed_rpm), needed_rpm * 1.25))
         else:
             spd = speed_rpm
         self._driver.move_pulse(

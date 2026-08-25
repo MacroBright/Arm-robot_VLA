@@ -276,9 +276,26 @@ def main():
                         anchor_r_hand[0] = r_hand.copy()
                     else:
                         r_diff = r_hand @ anchor_r_hand[0].T
-                        d_roll_raw = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
-                        # 符号对齐: 取反 Pitch 分量，确保手腕向下压扣 -> 低头下扣 (d_pitch < 0); 手腕向上抬起 -> 抬头扬起 (d_pitch > 0)
-                        d_pitch_raw = -float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
+                        axis = np.array([r_diff[2, 1] - r_diff[1, 2],
+                                         r_diff[0, 2] - r_diff[2, 0],
+                                         r_diff[1, 0] - r_diff[0, 1]])
+                        ax_norm = np.linalg.norm(axis)
+                        cos_ang = np.clip((np.trace(r_diff) - 1.0) / 2.0, -1.0, 1.0)
+                        ang_rad = float(np.arccos(cos_ang))
+                        theta_cam = np.zeros(3)
+                        if ax_norm > 1e-6 and ang_rad > 1e-4:
+                            theta_cam = (ang_rad / ax_norm) * axis
+                        theta_b = solved_R @ theta_cam
+
+                        # 人体工效学角度非线性放大 (人手 ±35° -> 机械臂 ±80°)
+                        def _amp(val_deg, deadband=3.0, gain=2.5, max_out=90.0):
+                            a = abs(val_deg)
+                            if a <= deadband:
+                                return 0.0
+                            return float(np.sign(val_deg) * min(max_out, gain * (a - deadband)))
+
+                        d_pitch_raw = _amp(-np.degrees(theta_b[0]), deadband=2.5, gain=2.0, max_out=65.0)
+                        d_roll_raw = _amp(np.degrees(theta_b[1]), deadband=3.0, gain=2.5, max_out=90.0)
 
                         # 模态过滤
                         if sandbox_mode[0] == 1:
@@ -286,16 +303,16 @@ def main():
                             d_roll, d_pitch = 0.0, 0.0
                         elif sandbox_mode[0] == 2:
                             # 模态 2: 滚法推法 (仅开放 Roll, 锁 Pitch)
-                            d_roll = d_roll_raw if abs(d_roll_raw) > 5.0 else 0.0
+                            d_roll = d_roll_raw
                             d_pitch = 0.0
                         elif sandbox_mode[0] == 3:
                             # 模态 3: 俯仰调节 (仅开放 Pitch, 锁 Roll)
                             d_roll = 0.0
-                            d_pitch = d_pitch_raw if abs(d_pitch_raw) > 5.0 else 0.0
+                            d_pitch = d_pitch_raw
                         else:
                             # 模态 4: 全 6-DOF
-                            d_roll = d_roll_raw if abs(d_roll_raw) > 5.0 else 0.0
-                            d_pitch = d_pitch_raw if abs(d_pitch_raw) > 5.0 else 0.0
+                            d_roll = d_roll_raw
+                            d_pitch = d_pitch_raw
 
                 # 中文动作映射实时解析
                 mode_names = {1: "1.点按揉捏(锁定)", 2: "2.滚法(单轴Roll)", 3: "3.俯仰调节(单轴Pitch)", 4: "4.全6DOF(全姿态)"}

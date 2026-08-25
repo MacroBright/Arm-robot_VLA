@@ -365,7 +365,7 @@ def main():
     ap.add_argument("--mode", choices=["knead", "roll", "pitch", "full"], default="knead",
                     help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
     ap.add_argument("--speed-scale", type=float, default=0.50,
-                    help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 0.50 对应 50%)")
+                    help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 0.50 对应 50%% 速度)")
     ap.add_argument("--ang-scale", type=float, default=1.0,
                     help="全局旋转角速度独立缩放比例 (0.1 ~ 1.5, 默认 1.0 高响应平滑)")
     ap.add_argument("--max-omega", type=float, default=3.0,

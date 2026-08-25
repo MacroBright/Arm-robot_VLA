@@ -110,17 +110,16 @@ class ZdtConfig:
     bitrate: int = 500_000
     timeout_s: float = 0.1
     retries: int = 3
-    # 0xFD 位置命令电机速度 (RPM, 修复 ×10 bug 后直传). 遥操三档需 ~150 RPM 上限.
-    speed_rpm: float = 150.0
+    # 0xFD 位置命令电机速度 (RPM, 修复 ×10 bug 后直传).
+    speed_rpm: float = 1800.0
     watchdog_s: float = 0.5
     joint_addrs: list[int] = field(default_factory=lambda: list(JOINT_ADDRS))
     limits: list[tuple[float, float]] = field(
         default_factory=lambda: list(FIRMWARE_JOINT_LIMITS))
     # 0xFD 位置命令参数 (固件 Emm_V5_Pos_Control 兼容)
     pulses_per_rev: int = 3200      # 16 细分下 3200 脉冲 = 电机轴一圈 (固件约定)
-    # 加速度档位 (0-255, 越高加速越快: (256-acc)*50µs/+1RPM). 遥操 50ms 帧内
-    # 需快速加速, 220 → 1.8ms/RPM, 50RPM 约 90ms 到位 (修复"爬行"). 初始值待真机调.
-    position_acc: int = 220
+    # 加速度档位 (0-255, 0=无延迟直冲最高速, 适合 50ms 周期运动).
+    position_acc: int = 0
     reduction_ratios: list[float] = field(
         default_factory=lambda: list(DEFAULT_REDUCTION_RATIOS))
     # 0x36 pos → 真实输出角度 标定表 (默认整机 CALIB). 经 (pos - b) / k 换算,

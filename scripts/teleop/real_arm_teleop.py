@@ -446,7 +446,8 @@ def main():
     else:
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
         from lerobot_robot_massage.zdt.controller import ZdtController  # noqa: E402
-        ctrl = ZdtController(ZdtConfig(channel=args.iface, speed_rpm=2800.0, max_vel_mm_s=600.0, max_ang_rad_s=10.0,
+        ctrl = ZdtController(ZdtConfig(channel=args.iface, speed_rpm=2800.0, position_acc=0,
+                                       max_vel_mm_s=600.0, max_ang_rad_s=10.0,
                                        max_joint_vel_deg_s=540.0, max_joint_acc_deg_s2=2000.0))
         adapter = RealArmAdapter(ctrl, max_dq_deg=30.0)
 
@@ -454,8 +455,8 @@ def main():
     recorder = EpisodeRecorder(args.out)
 
     # 3D 腕部位置滤波 (n_joints=3) 与 3D 姿态李群正交平滑滤波 (n_joints=9)
-    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=0.4, beta=0.005)
-    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=0.3, beta=0.003)
+    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=1.5, beta=0.08)
+    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=1.0, beta=0.05)
 
     latest_frame = [None]
     latest_hand = [None]

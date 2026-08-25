@@ -193,27 +193,27 @@ class RealArmTeleop:
 
 
 def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
-    """在 OpenCV 画面右上角绘制 6 关节 all status 实时监控表 (pos + current + flag)."""
+    """在 OpenCV 画面右下角绘制 6 关节 all status 实时监控表 (pos + current + flag)."""
     if joint_state is None:
         return
     import cv2
     h, w = bgr.shape[:2]
-    box_w, box_h = 360, 185
-    x0 = w - box_w - 15
-    y0 = 52
+    box_w, box_h = 295, 148
+    x0 = w - box_w - 12
+    y0 = h - box_h - 12
 
     # 半透明深色底框
     overlay = bgr.copy()
-    cv2.rectangle(overlay, (x0, y0), (x0 + box_w, y0 + box_h), (20, 20, 26), -1)
-    cv2.addWeighted(overlay, 0.80, bgr, 0.20, 0, bgr)
-    cv2.rectangle(bgr, (x0, y0), (x0 + box_w, y0 + box_h), (70, 70, 85), 1)
+    cv2.rectangle(overlay, (x0, y0), (x0 + box_w, y0 + box_h), (18, 18, 24), -1)
+    cv2.addWeighted(overlay, 0.82, bgr, 0.18, 0, bgr)
+    cv2.rectangle(bgr, (x0, y0), (x0 + box_w, y0 + box_h), (65, 65, 80), 1)
 
     # 标题与表头
-    title = "[ALL STATUS - 6 JOINTS TELEMETRY]" if not no_drive else "[ALL STATUS - 6 JOINTS (SIM)]"
-    cv2.putText(bgr, title, (x0 + 12, y0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 1)
-    header = "Jnt  CAN   Pos(deg)   Current   Flag/Status"
-    cv2.putText(bgr, header, (x0 + 12, y0 + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (170, 170, 180), 1)
-    cv2.line(bgr, (x0 + 10, y0 + 44), (x0 + box_w - 10, y0 + 44), (70, 70, 85), 1)
+    title = "[6-AXIS JOINTS TELEMETRY]" if not no_drive else "[6-AXIS JOINTS (SIM)]"
+    cv2.putText(bgr, title, (x0 + 10, y0 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1)
+    header = "Jnt  Addr   Pos(deg)   Current   Flag"
+    cv2.putText(bgr, header, (x0 + 10, y0 + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (160, 160, 170), 1)
+    cv2.line(bgr, (x0 + 8, y0 + 37), (x0 + box_w - 8, y0 + 37), (65, 65, 80), 1)
 
     addrs = [0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
     q = list(joint_state.q) if joint_state and joint_state.q else [0.0] * 6
@@ -221,27 +221,27 @@ def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
     flags = list(joint_state.flags) if joint_state and joint_state.flags else [0] * 6
 
     for i in range(6):
-        row_y = y0 + 64 + i * 20
+        row_y = y0 + 53 + i * 15
         deg_str = f"{q[i]:+6.1f}°" if i < len(q) else " N/A "
         cur_str = f"{int(cur[i]):4d}mA" if (i < len(cur) and not no_drive) else " 0mA"
         flg_val = flags[i] if i < len(flags) else 0
-        flg_str = f"0x{flg_val:02X} OK" if flg_val == 0 else f"0x{flg_val:02X} WARN"
+        flg_str = f"0x{flg_val:02X} OK" if flg_val == 0 else f"0x{flg_val:02X} WRN"
         flg_color = (0, 255, 0) if flg_val == 0 else (0, 165, 255)
 
         line_txt = f" J{i+1}  0x{addrs[i]:02X}  {deg_str:8s}  {cur_str:7s}"
-        cv2.putText(bgr, line_txt, (x0 + 12, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (230, 230, 230), 1)
-        cv2.putText(bgr, flg_str, (x0 + 265, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, flg_color, 1)
+        cv2.putText(bgr, line_txt, (x0 + 10, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 220, 220), 1)
+        cv2.putText(bgr, flg_str, (x0 + 218, row_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, flg_color, 1)
 
 
 def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
-                  no_drive: bool = False, speed_scale: float = 1.0,
+                  no_drive: bool = False, lin_scale: float = 1.0, ang_scale: float = 1.0,
                   joint_state=None) -> None:
     """在 OpenCV 画面上绘制丰富图元 (状态横幅 + 离合徽标 + 锚定球 + 速度矢量 + 数值反馈 + 关节全状态表)."""
     import cv2
     h, w = bgr.shape[:2]
     tag = "[NO-DRIVE] " if no_drive else ""
-    if speed_scale < 1.0:
-        tag += f"[{int(speed_scale * 100)}% SPEED] "
+    if lin_scale < 1.0 or ang_scale < 1.0:
+        tag += f"[{int(lin_scale * 100)}% LIN | {int(ang_scale * 100)}% ANG] "
     phase = out.get("phase", "N/A")
     action = out.get("action", "N/A")
 
@@ -270,11 +270,18 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
     ang = cmd.angular_velocity if cmd else (0.0, 0.0, 0.0)
 
     if clutch_active and action != "ESTOP":
-        spd_txt = f"v_lin: [{vel[0]:+5.1f}, {vel[1]:+5.1f}, {vel[2]:+5.1f}] mm/s"
+        x_dir = "前" if vel[0] > 4 else ("后" if vel[0] < -4 else "-")
+        y_dir = "左" if vel[1] > 4 else ("右" if vel[1] < -4 else "-")
+        z_dir = "上" if vel[2] > 4 else ("下" if vel[2] < -4 else "-")
+        spd_txt = f"v_lin: [{vel[0]:+5.1f}({x_dir}), {vel[1]:+5.1f}({y_dir}), {vel[2]:+5.1f}({z_dir})] mm/s"
         cv2.putText(bgr, spd_txt, (15, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-        is_rot = np.linalg.norm(ang) > 0.05
+
+        roll_dir = "右滚" if ang[0] > 0.08 else ("左滚" if ang[0] < -0.08 else "")
+        pitch_dir = "低头" if ang[1] < -0.08 else ("抬头" if ang[1] > 0.08 else "")
+        is_rot = np.linalg.norm(ang) > 0.04
         ang_color = (0, 255, 255) if is_rot else (200, 200, 200)
-        rot_tag = " [ROTATING]" if is_rot else ""
+        tags = [t for t in [roll_dir, pitch_dir] if t]
+        rot_tag = f" [{' '.join(tags)}]" if tags else ""
         ang_txt = f"w_ang: [{ang[0]:+5.2f}, {ang[1]:+5.2f}, {ang[2]:+5.2f}] rad/s{rot_tag}"
         cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ang_color, 2)
     else:
@@ -319,7 +326,9 @@ def main():
                     help="确认重力关节 J2/J3 二次确认 (真机驱动必须)")
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
     ap.add_argument("--speed-scale", type=float, default=1.0,
-                    help="全局速度缩放比例 (0.01 ~ 1.0, 硬件安全首测建议 0.05 即 5%% 速度)")
+                    help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 1.0)")
+    ap.add_argument("--ang-scale", type=float, default=None,
+                    help="全局旋转角速度独立缩放比例 (0.01 ~ 1.0, 默认自动解耦为高响应 0.8)")
     args = ap.parse_args()
     if not args.gravity_confirm and not args.no_drive:
         sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (空跑测试请加 --no-drive)")
@@ -359,8 +368,8 @@ def main():
     recorder = EpisodeRecorder(args.out)
 
     # 3D 腕部位置滤波 (n_joints=3) 与 3D 姿态李群正交平滑滤波 (n_joints=9)
-    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=0.8, beta=0.02)
-    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=0.6, beta=0.01)
+    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=0.4, beta=0.005)
+    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=0.3, beta=0.003)
 
     latest_frame = [None]
     latest_hand = [None]
@@ -376,9 +385,11 @@ def main():
     anchor_pitch = [0.0]
     anchor_roll = [0.0]
 
-    # 全局速度缩放比例 (0.01 ~ 1.0)
-    speed_scale = max(0.01, min(1.0, float(args.speed_scale)))
+    # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale
+    lin_scale = max(0.01, min(1.0, float(args.speed_scale)))
+    ang_scale = max(0.01, min(1.0, float(args.ang_scale))) if args.ang_scale is not None else 0.8
     smooth_v_base = [np.zeros(3)]
+    smooth_w_base = [np.zeros(3)]
 
     def hand_provider():
         ok, bgr, depth, K = cam.read_with_depth()
@@ -468,25 +479,33 @@ def main():
         v_base = (0.0, 0.0, 0.0)
         w_base = (0.0, 0.0, 0.0)
 
-        # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 8mm/s 死区平滑过渡 + 80mm/s 硬限幅 + EMA低通滤波 + 全局速度缩放
+        # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 14mm/s 独立死区 + 跨轴正交抑制 + 80mm/s 硬限幅 + EMA低通滤波 + 全局速度缩放
         v_target = np.zeros(3)
         if last_wrist[0] is not None and last_t[0] is not None:
             dt = now - last_t[0]
             if 0.001 < dt < 0.5:
                 v_cam = (wrist_cam - last_wrist[0]) / dt
                 v_b = r_cam_to_base @ v_cam
-                v_norm = float(np.linalg.norm(v_b))
-                if v_norm >= 8.0:
-                    # 线性平滑外推并限幅在 80 mm/s (人手最大输入线速度)
-                    scaled_spd = min(80.0, (v_norm - 8.0) * 1.2)
-                    v_target = (v_b / v_norm) * scaled_spd
+                # 14 mm/s 单轴独立死区过滤
+                v_b_clamped = np.zeros(3)
+                for i in range(3):
+                    if abs(v_b[i]) > 14.0:
+                        scaled_i = np.sign(v_b[i]) * min(80.0, (abs(v_b[i]) - 14.0) * 1.25)
+                        v_b_clamped[i] = scaled_i
+                # 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 30% 视为微震耦合并清零
+                max_axis = float(np.max(np.abs(v_b_clamped)))
+                if max_axis > 20.0:
+                    for i in range(3):
+                        if abs(v_b_clamped[i]) < 0.30 * max_axis:
+                            v_b_clamped[i] = 0.0
+                v_target = v_b_clamped
 
-        # EMA 低通滤波 (α=0.40)，消除采样离散抖动
-        smooth_v_base[0] = 0.40 * v_target + 0.60 * smooth_v_base[0]
+        # EMA 低通滤波 (α=0.30)，平稳响应消除采样离散抖动
+        smooth_v_base[0] = 0.30 * v_target + 0.70 * smooth_v_base[0]
         if np.linalg.norm(smooth_v_base[0]) < 1.0:
             smooth_v_base[0] = np.zeros(3)
-        # 乘以全局速度缩放比例 speed_scale
-        v_base = tuple(float(x * speed_scale) for x in smooth_v_base[0])
+        # 乘以平移线速度缩放比例 lin_scale
+        v_base = tuple(float(x * lin_scale) for x in smooth_v_base[0])
 
         last_wrist[0] = wrist_cam
         last_t[0] = now
@@ -494,6 +513,7 @@ def main():
         # 2. 方案 A 摇杆偏角速率控制 (姿态): 严格基于 SO(3) 相对旋转解算，杜绝欧拉角奇异点
         if anchor_r_hand[0] is None or not teleop.clutch_active:
             anchor_r_hand[0] = r_hand.copy()
+            smooth_w_base[0] = np.zeros(3)
             w_base = (0.0, 0.0, 0.0)
             d_pitch = 0.0
             d_roll = 0.0
@@ -503,11 +523,23 @@ def main():
             cos_ang = np.clip((np.trace(r_diff) - 1.0) / 2.0, -1.0, 1.0)
             ang_rad = float(np.arccos(cos_ang))
 
-            # 严格由 R_rel 提取相对偏转角 (静止在零位时严格为 0.0°，无任何奇异跳变)
-            d_roll = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
-            d_pitch = float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
+            # 严格由 R_rel 提取相对偏转角
+            d_roll_raw = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
+            d_pitch_raw = float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
 
-            ANG_DEADZONE_RAD = np.radians(4.0)
+            # 9.0° 独立轴死区过滤 (低于 9° 强制置零，彻底消除手平放时的静止漂移)
+            d_roll = d_roll_raw if abs(d_roll_raw) > 9.0 else 0.0
+            d_pitch = d_pitch_raw if abs(d_pitch_raw) > 9.0 else 0.0
+
+            # 跨轴正交抑制 (Cross-Axis Rejection)
+            if abs(d_roll) > 16.0 and abs(d_pitch) < 0.35 * abs(d_roll):
+                d_pitch = 0.0
+            elif abs(d_pitch) > 16.0 and abs(d_roll) < 0.35 * abs(d_pitch):
+                d_roll = 0.0
+
+            # 9.0° 稳健死区 + 幂函数平滑起步过渡
+            ANG_DEADZONE_RAD = np.radians(9.0)
+            w_target = np.zeros(3)
             if ang_rad > ANG_DEADZONE_RAD:
                 eff_ang = ang_rad - ANG_DEADZONE_RAD
                 axis = np.array([r_diff[2, 1] - r_diff[1, 2],
@@ -515,10 +547,19 @@ def main():
                                  r_diff[1, 0] - r_diff[0, 1]])
                 ax_norm = np.linalg.norm(axis)
                 if ax_norm > 1e-6:
-                    raw_ang_vel = min(0.8, 1.2 * eff_ang)
+                    MAX_DEFLECT_RAD = np.radians(26.0)  # 35° 满量程 - 9° 死区 = 26° 有效行程
+                    ratio = min(1.0, eff_ang / MAX_DEFLECT_RAD)
+                    # 1.3 次幂非线性平滑过渡：轻微偏出时平稳起步(0.02~0.05 rad/s)，深度翻腕迅速达到 0.8 rad/s
+                    raw_ang_vel = (ratio ** 1.3) * 0.8
                     w_cam = raw_ang_vel * (axis / ax_norm)
                     w_b = r_cam_to_base @ w_cam
-                    w_base = tuple(float(x * speed_scale) for x in w_b)
+                    w_target = w_b * ang_scale
+
+            # EMA 低通滤波 (α=0.30)，消除采样微震，死区内强制平滑归零
+            smooth_w_base[0] = 0.30 * w_target + 0.70 * smooth_w_base[0]
+            if np.linalg.norm(smooth_w_base[0]) < 0.02:
+                smooth_w_base[0] = np.zeros(3)
+            w_base = tuple(float(x) for x in smooth_w_base[0])
 
         info = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
                 "wrist_mm": tuple(float(v) for v in pts[0]),
@@ -579,7 +620,7 @@ def main():
 
             if latest_frame[0] is not None:
                 _draw_overlay(latest_frame[0], out, latest_hand[0], teleop.clutch_active,
-                              no_drive=args.no_drive, speed_scale=speed_scale,
+                              no_drive=args.no_drive, lin_scale=lin_scale, ang_scale=ang_scale,
                               joint_state=cached_joint_state[0])
                 cv2.imshow(WIN_NAME, latest_frame[0])
 

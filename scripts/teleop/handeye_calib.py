@@ -1,15 +1,17 @@
-"""手眼标定：相机系→机器人基座系的旋转 R（差分遥操只需旋转）。
+"""手眼标定：相机系→机器人基座系的 3D 正交旋转变换 R (6DOF 完整标定向导 & 实时沙盒).
 
-方式 A: 直接填相机安装欧拉角 → rot_from_euler。
-方式 B: N 点 Procrustes（≥4 非共面）：手到已知物理位置 + 臂端对应位置。
-方式 C: 轴对齐向导 (Arm 侧 demo_arm_teleop.py 中通过 K 键流程调用)。
-
-历史路径: 此文件原位于 Leap_Hand/python/gesture_mapping/handeye_calib.py,
-2026-08 迁移到本仓. apply_rotation() 函数已被内联到
-Leap_Hand/python/gesture_mapping/wrist_tracker.py (那里只有它被共享
-调用, 不再需要跨仓 sys.path 注入).
+标定流程:
+  1. 3 轴平移标定: 右方平移(-Y)、前方推移(+X)、上方抬高(+Z)
+  2. 2 轴旋转标定: 右翻掌(Roll)、手掌下扣(Pitch)
+  3. Procrustes SVD 正交求解最优 SO(3) 旋转矩阵 R
+  4. 实时 6DOF 沙盒验证 (Live Sandbox): 实时直观测试 6 方向运动映射
+  5. 确认无误后按 Y / SPACE 写入 handeye_calib.json
 """
+import argparse
 import json
+import math
+import sys
+import time
 from pathlib import Path
 from typing import Union
 
@@ -31,7 +33,7 @@ def rot_from_euler(rx_deg: float, ry_deg: float, rz_deg: float) -> np.ndarray:
 
 
 def procrustes_rotation(src_pts, dst_pts) -> np.ndarray:
-    """最小化 Σ||R@p_i − q_i||² 的旋转 R。src/dst: (N,3)。返回 R(3,3)。"""
+    """最小化 Σ||R@p_i − q_i||² 的正交旋转矩阵 R (det=1). src/dst: (N,3). 返回 R(3,3)."""
     src = np.asarray(src_pts, float).T   # (3,N)
     dst = np.asarray(dst_pts, float).T   # (3,N)
     H = src @ dst.T
@@ -58,152 +60,355 @@ def load_calib(path: _Path) -> np.ndarray:
     return np.array(data["R"])
 
 
-# 基座方向码: 1=+X 2=-X 3=+Y 4=-Y 5=+Z(上) 6=-Z(下)
+# 基座方向码: 1=+X(前) 2=-X(后) 3=+Y(左) 4=-Y(右) 5=+Z(上) 6=-Z(下)
 _BASE_DIR_CODES = {
-    1: np.array([1.0, 0.0, 0.0]), 2: np.array([-1.0, 0.0, 0.0]),
-    3: np.array([0.0, 1.0, 0.0]), 4: np.array([0.0, -1.0, 0.0]),
-    5: np.array([0.0, 0.0, 1.0]), 6: np.array([0.0, 0.0, -1.0]),
+    1: np.array([1.0, 0.0, 0.0]),   # +X (机械臂前方/推拿床方向)
+    2: np.array([-1.0, 0.0, 0.0]),  # -X (机械臂后方/立柱方向)
+    3: np.array([0.0, 1.0, 0.0]),   # +Y (机械臂左方)
+    4: np.array([0.0, -1.0, 0.0]),  # -Y (机械臂右方)
+    5: np.array([0.0, 0.0, 1.0]),   # +Z (机械臂上方/抬高)
+    6: np.array([0.0, 0.0, -1.0]),  # -Z (机械臂下方/下压)
 }
 
 
 def solve_handeye(cam_dirs, base_codes):
-    """从 (相机系单位方向, 基座方向码) 配对解手眼旋转 R。
-
-    cam_dirs: (N,3) 相机系单位方向（操作者沿某方向挥手的位移方向）
-    base_codes: 长度 N 的 int 列表，操作者指定"臂应去"的基座方向码(1-6)
-    返回 R(3,3) 使 R @ cam_dir_i ≈ base_dir(base_codes[i])。
-    """
+    """从 (相机系单位方向, 基座方向码) 配对解手眼旋转 R."""
     src = np.asarray(cam_dirs, float)
     dst = np.array([_BASE_DIR_CODES[c] for c in base_codes], float)
     return procrustes_rotation(src, dst)
 
 
 def main():
-    import argparse
-    import sys
     import cv2
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "Leap_Hand" / "python"))
     from gesture_mapping.camera import open_realsense
+    from gesture_mapping.filter import OneEuroFilter
     from gesture_mapping.hand_tracker import HandTracker
     from gesture_mapping.wrist_tracker import build_palm_pts
 
-    ap = argparse.ArgumentParser(description="手眼标定向导 (相机系 -> 机器人基座系 R 旋转标定)")
+    ap = argparse.ArgumentParser(description="TuinaDex 6DOF 视觉手眼交互标定向导 & 实时沙盒")
     ap.add_argument("--out", default=str(Path(__file__).parent / "handeye_calib.json"),
                     help="标定输出文件路径")
+    ap.add_argument("--sandbox", action="store_true",
+                    help="直接加载现有标定矩阵，进入 6DOF 实时沙盒挥手测试")
     args = ap.parse_args()
 
-    print("=" * 60)
-    print("【TuinaDex 手眼标定向导】")
-    print("目标: 求解 RealSense D455 相机系到机械臂基座系的 3D 旋转矩阵 R")
-    print("=" * 60)
+    calib_out_path = Path(args.out)
+    solved_R = None
+    in_sandbox = False
+
+    if args.sandbox:
+        if calib_out_path.exists():
+            solved_R = load_calib(calib_out_path)
+            in_sandbox = True
+            print(f"[沙盒模式] 已加载现有标定矩阵: {calib_out_path}")
+        else:
+            print(f"[提示] 未找到现有标定文件 {calib_out_path}，将先运行 5 步标定向导。")
+
+    print("=" * 70)
+    print("【TuinaDex 6DOF 视觉手眼标定向导】")
+    print("本向导通过 5 步简易手势采样，求解 RealSense D455 相机系到机械臂基座系的正交旋转矩阵 R。")
+    print("=" * 70)
 
     cam = open_realsense()
     if cam is None:
-        sys.exit("错误: 未检测到 RealSense 相机，请检查 USB 连接。")
+        sys.exit("错误: 未检测到 RealSense 相机，请检查 USB 3.0 连接。")
 
     tracker = HandTracker(max_num_hands=1)
-    win_name = "Hand-Eye Calibration Wizard"
-    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(win_name, 960, 720)
+    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=0.4, beta=0.005)
+    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=0.3, beta=0.003)
 
+    win_name = "TuinaDex 6DOF Hand-Eye Calibration & Sandbox"
+    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(win_name, 1024, 768)
+
+    # 5 步标定定义:
+    # (步骤名称, 详细中文动作指引, 机械臂末端对应运动, 基座方向码, 模式)
     steps = [
-        ("Step 1/3: 请沿机械臂 +X 方向 (右方) 平移手掌约 15cm", 1),
-        ("Step 2/3: 请沿机械臂 +Y 方向 (前方) 平移手掌约 15cm", 3),
-        ("Step 3/3: 请沿机械臂 +Z 方向 (上方) 平移手掌约 15cm", 5),
+        ("Step 1/5 [左右平移 (水平横向)]", "请将手掌在水平面上【向右平移】约 15~20cm", "机械臂末端向【右方】平移 (-Y)", 4, "lin"),
+        ("Step 2/5 [前后推拉 (水平纵向)]", "请将手掌在水平面上【向前推移】约 15~20cm (远离身体向前推)", "机械臂末端向【前方】延伸 (+X)", 1, "lin"),
+        ("Step 3/5 [上下升降 (垂直高度)]", "请将手掌垂直【向上抬高/远离相机】约 15~20cm (向天花板抬手)", "机械臂末端向【上方】抬起 (+Z)", 5, "lin"),
+        ("Step 4/5 [旋转: 左右翻掌]", "请将手掌向【右侧倾斜翻掌/顺时针翻腕】约 25°", "机械臂末端向【右顺时针滚转】(Roll)", 1, "rot"),
+        ("Step 5/5 [旋转: 手掌下扣]", "请将手腕向【下弯曲/手掌向下扣】约 25°", "机械臂末端向【下低头点头】(Pitch)", 4, "rot"),
     ]
 
     current_step = 0
     calib_cam_dirs = []
-    calib_codes = []
+    calib_task_codes = []
     history_pts = []
+    history_rot = []
     is_recording = False
 
-    print("\n按 SPACE 开始记录当前步骤的手部轨迹，平移手掌约 15~20cm 后再次按 SPACE 确认。")
-    print("按 Q 或 ESC 随时退出。\n")
+    # 沙盒实时物理量跟踪
+    last_wrist = [None]
+    last_t = [None]
+    anchor_r_hand = [None]
+    smooth_v_base = np.zeros(3)
 
     try:
-        while current_step < len(steps):
+        while True:
             ok, bgr, depth, K = cam.read_with_depth()
             if not ok or bgr is None:
                 continue
 
             hands = tracker.detect(bgr)
             wrist_cam = None
+            r_hand = None
+            px_coord = None
             if hands:
                 bgr = tracker.draw_landmarks(bgr, hands)
                 pts = build_palm_pts(hands[0], depth, K)
                 if pts is not None:
-                    wrist_cam = pts[0]
+                    wrist_raw = pts[0]
+                    wrist_cam = pts_filter(wrist_raw)
+
+                    # 姿态提取: 严格使用解剖学刚体掌骨基底 0-5-17 (基于 MediaPipe 3D World Landmarks，免疫手指弯曲与像素深度边缘噪声)
+                    if hands[0].world_landmarks and len(hands[0].world_landmarks) >= 18:
+                        wl = hands[0].world_landmarks
+                        w0 = np.array([wl[0].x, wl[0].y, wl[0].z], dtype=float)
+                        m5 = np.array([wl[5].x, wl[5].y, wl[5].z], dtype=float)
+                        m17 = np.array([wl[17].x, wl[17].y, wl[17].z], dtype=float)
+                    else:
+                        lm = hands[0].landmarks
+                        w0 = np.array([lm[0].x, lm[0].y, lm[0].z], dtype=float)
+                        m5 = np.array([lm[5].x, lm[5].y, lm[5].z], dtype=float)
+                        m17 = np.array([lm[17].x, lm[17].y, lm[17].z], dtype=float)
+
+                    f = 0.5 * (m5 + m17) - w0
+                    f = f / (np.linalg.norm(f) + 1e-9)
+                    across = m17 - m5
+                    across = across / (np.linalg.norm(across) + 1e-9)
+                    n = np.cross(across, f)
+                    n = n / (np.linalg.norm(n) + 1e-9)
+                    lat = np.cross(f, n)
+                    r_raw = np.stack([f, n, lat], axis=1)
+
+                    # 李群旋转矩阵低通平滑 + SVD 严格正交重整化
+                    r_filtered = rot_filter(r_raw.flatten()).reshape(3, 3)
+                    u_svd, _, vt_svd = np.linalg.svd(r_filtered)
+                    r_hand = u_svd @ vt_svd
+
+                    px_coord = (int(hands[0].landmarks[0].x * bgr.shape[1]),
+                                int(hands[0].landmarks[0].y * bgr.shape[0]))
 
             h, w = bgr.shape[:2]
+            now = time.monotonic()
 
-            # 顶部 HUD 提示
-            step_title, target_code = steps[current_step]
-            cv2.rectangle(bgr, (0, 0), (w, 55), (30, 30, 30), -1)
-            cv2.putText(bgr, f"[{step_title}]", (15, 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 220, 255), 2)
+            # -------------------------------------------------------------
+            # 模式 A: 5 步交互式引导采样
+            # -------------------------------------------------------------
+            if not in_sandbox:
+                step_title, action_guide, robot_guide, task_code, mode_type = steps[current_step]
 
-            if not is_recording:
-                hint_txt = "Press [SPACE] to start recording motion vector"
-                cv2.putText(bgr, hint_txt, (15, 48),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                # 顶部信息横幅
+                cv2.rectangle(bgr, (0, 0), (w, 80), (25, 25, 32), -1)
+                cv2.putText(bgr, f"{step_title}", (18, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.70, (0, 230, 255), 2)
+                cv2.putText(bgr, f"人手动作: {action_guide}", (18, 55),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+                cv2.putText(bgr, f"映射目标: {robot_guide}", (18, 75),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 120), 1)
+
+                # 底部操作提示
+                cv2.rectangle(bgr, (0, h - 50), (w, h), (20, 20, 25), -1)
+                if not is_recording:
+                    hint_txt = "按 [SPACE 空格键] 开始记录手势轨迹 | [Q/ESC] 退出"
+                    cv2.putText(bgr, hint_txt, (18, h - 18),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.58, (200, 200, 200), 2)
+                else:
+                    samples_cnt = len(history_pts) if mode_type == "lin" else len(history_rot)
+                    hint_txt = f"● 正在录制手势中... 采样帧数: {samples_cnt} | 完成后再次按 [SPACE] 确认"
+                    cv2.putText(bgr, hint_txt, (18, h - 18),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 0), 2)
+
+                    if mode_type == "lin" and wrist_cam is not None:
+                        history_pts.append(wrist_cam)
+                    elif mode_type == "rot" and r_hand is not None:
+                        history_rot.append(r_hand)
+
+                # 绘制轨迹拖尾点
+                if is_recording and len(history_pts) > 1:
+                    for i in range(1, len(history_pts)):
+                        p1 = tuple(np.int32(history_pts[i - 1][:2]))
+                        p2 = tuple(np.int32(history_pts[i][:2]))
+                        cv2.line(bgr, p1, p2, (0, 255, 255), 2)
+
+            # -------------------------------------------------------------
+            # 模式 B: 实时 6DOF 沙盒验证 (Live Sandbox Preview)
+            # -------------------------------------------------------------
             else:
-                hint_txt = f"RECORDING... Move Hand now! Samples: {len(history_pts)} | Press [SPACE] to save"
-                cv2.putText(bgr, hint_txt, (15, 48),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                if wrist_cam is not None:
-                    history_pts.append(wrist_cam)
+                cv2.rectangle(bgr, (0, 0), (w, 90), (18, 35, 18), -1)
+                cv2.putText(bgr, "[实时 6DOF 运动沙盒验证 Sandbox Mode]", (18, 28),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.70, (0, 255, 0), 2)
+                cv2.putText(bgr, "请自由向各个方向挥手/翻腕: [Y/SPACE] 保存标定 | [C] 姿态零位重置 | [R] 重做标定 | [Q] 退出",
+                            (18, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
+
+                v_b = np.zeros(3)
+                if wrist_cam is not None and last_wrist[0] is not None and last_t[0] is not None:
+                    dt = now - last_t[0]
+                    if 0.001 < dt < 0.5:
+                        v_cam = (wrist_cam - last_wrist[0]) / dt
+                        v_b_raw = solved_R @ v_cam
+                        # 1. 14 mm/s 单轴独立死区门限 (彻底切除微幅生理手震与视觉散斑)
+                        v_b_clamped = np.zeros(3)
+                        for i in range(3):
+                            if abs(v_b_raw[i]) > 14.0:
+                                v_b_clamped[i] = v_b_raw[i]
+                        # 2. 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 30% 视为微震耦合并清零
+                        max_axis_val = float(np.max(np.abs(v_b_clamped)))
+                        if max_axis_val > 22.0:
+                            for i in range(3):
+                                if abs(v_b_clamped[i]) < 0.30 * max_axis_val:
+                                    v_b_clamped[i] = 0.0
+                        smooth_v_base = 0.25 * v_b_clamped + 0.75 * smooth_v_base
+                        v_b = smooth_v_base
+
+                last_wrist[0] = wrist_cam
+                last_t[0] = now
+
+                # 姿态旋转解算
+                d_roll_raw, d_pitch_raw = 0.0, 0.0
+                d_roll, d_pitch = 0.0, 0.0
+                if r_hand is not None:
+                    if anchor_r_hand[0] is None:
+                        anchor_r_hand[0] = r_hand.copy()
+                    else:
+                        r_diff = r_hand @ anchor_r_hand[0].T
+                        d_roll_raw = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
+                        d_pitch_raw = float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
+
+                        # 9.0° 独立轴死区过滤 (低于 9° 强制置零)
+                        if abs(d_roll_raw) > 9.0:
+                            d_roll = d_roll_raw
+                        if abs(d_pitch_raw) > 9.0:
+                            d_pitch = d_pitch_raw
+
+                        # 跨轴正交抑制 (Cross-Axis Rejection)
+                        if abs(d_roll) > 16.0 and abs(d_pitch) < 0.35 * abs(d_roll):
+                            d_pitch = 0.0
+                        elif abs(d_pitch) > 16.0 and abs(d_roll) < 0.35 * abs(d_pitch):
+                            d_roll = 0.0
+
+                # 中文动作映射实时解析
+                x_tag = "【+X 前进延伸】" if v_b[0] > 10 else ("【-X 后退收缩】" if v_b[0] < -10 else "静止")
+                y_tag = "【+Y 向左平移】" if v_b[1] > 10 else ("【-Y 向右平移】" if v_b[1] < -10 else "静止")
+                z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
+                roll_tag = "【向右滚转】" if d_roll > 0 else ("【向左滚转】" if d_roll < 0 else "水平 (死区内)")
+                pitch_tag = "【向下点头】" if d_pitch > 0 else ("【向上抬头】" if d_pitch < 0 else "水平 (死区内)")
+
+                # 左侧数据面板
+                cv2.rectangle(bgr, (15, 100), (460, 265), (20, 20, 28), -1)
+                cv2.rectangle(bgr, (15, 100), (460, 265), (60, 60, 80), 1)
+
+                cv2.putText(bgr, f"平移 X(前后): {v_b[0]:+5.1f} mm/s -> {x_tag}", (25, 128),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 1)
+                cv2.putText(bgr, f"平移 Y(左右): {v_b[1]:+5.1f} mm/s -> {y_tag}", (25, 155),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 120), 1)
+                cv2.putText(bgr, f"平移 Z(上下): {v_b[2]:+5.1f} mm/s -> {z_tag}", (25, 182),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 180, 0), 1)
+                cv2.putText(bgr, f"旋转 Roll : {d_roll:+5.1f} deg  -> {roll_tag}", (25, 212),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (220, 220, 255), 1)
+                cv2.putText(bgr, f"旋转 Pitch: {d_pitch:+5.1f} deg  -> {pitch_tag}", (25, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (220, 220, 255), 1)
+
+                # 手腕圆环与牵引线
+                if px_coord is not None:
+                    u, v = px_coord
+                    cv2.circle(bgr, (u, v), 10, (0, 255, 0), -1)
+                    cv2.circle(bgr, (u, v), 14, (255, 255, 255), 2)
+                    dx = int(np.clip(v_b[1] * -1.5, -80, 80))
+                    dy = int(np.clip(v_b[0] * -1.5, -80, 80))
+                    if abs(dx) > 4 or abs(dy) > 4:
+                        cv2.arrowedLine(bgr, (u, v), (u + dx, v + dy), (255, 50, 50), 3, tipLength=0.3)
 
             cv2.imshow(win_name, bgr)
             k = cv2.waitKey(1) & 0xFF
 
             if k in (ord("q"), ord("Q"), 27):
-                print("[退出] 标定已取消。")
+                print("\n[退出] 标定向导已安全退出。")
                 return
 
-            if k == ord(" "):
+            if in_sandbox:
+                if k in (ord("c"), ord("C")):
+                    anchor_r_hand[0] = None
+                    print("[沙盒] 姿态零位已重置 (Re-centered)。")
+                elif k in (ord("y"), ord("Y"), ord(" ")):
+                    save_calib(args.out, solved_R)
+                    print("\n" + "=" * 60)
+                    print(f"✅ 标定矩阵已成功保存至: {args.out}")
+                    print("求解所得 3D 正交旋转矩阵 R:")
+                    print(np.round(solved_R, 4))
+                    print("=" * 60)
+                    return
+                elif k in (ord("r"), ord("R")):
+                    in_sandbox = False
+                    current_step = 0
+                    calib_cam_dirs = []
+                    calib_task_codes = []
+                    history_pts = []
+                    history_rot = []
+                    is_recording = False
+                    print("\n[重新标定] 重置向导至第 1 步。")
+                    continue
+
+            # 采样阶段按 SPACE 处理
+            if not in_sandbox and k == ord(" "):
                 if not is_recording:
                     history_pts = []
+                    history_rot = []
                     is_recording = True
-                    print(f"[{step_title}] 开始记录轨迹，请平移手部...")
+                    print(f"\n▶ 开始记录 [{step_title}]，请按提示动作平移/旋转手部...")
                 else:
                     is_recording = False
-                    if len(history_pts) < 5:
-                        print("采样点过少，请重新按 SPACE 录制。")
-                    else:
+                    mode_type = steps[current_step][4]
+                    task_code = steps[current_step][3]
+
+                    if mode_type == "lin":
+                        if len(history_pts) < 5:
+                            print("⚠️ 采样点过少，请重新按 SPACE 录制。")
+                            continue
                         d = history_pts[-1] - history_pts[0]
                         norm = np.linalg.norm(d)
-                        if norm < 25.0:
-                            print(f"手部位移过小 ({norm:.1f} mm < 25 mm)，请重新大幅度平移手部。")
-                        else:
-                            unit_dir = d / norm
-                            calib_cam_dirs.append(unit_dir)
-                            calib_codes.append(target_code)
-                            print(f"[{step_title}] 采集成功! 相机系位移向量: {np.round(unit_dir, 3)}, 距离: {norm:.1f} mm")
-                            current_step += 1
+                        if norm < 20.0:
+                            print(f"⚠️ 手部位移过小 ({norm:.1f}mm < 20mm)，请重新平移手部。")
+                            continue
+                        unit_dir = d / norm
+                        calib_cam_dirs.append(unit_dir)
+                        calib_task_codes.append(task_code)
+                        print(f"✓ [{step_title}] 采样成功: 位移 {norm:.1f}mm, 矢量: {np.round(unit_dir, 3)}")
 
-        # 3 个方向均采集完成，解算 R 矩阵
-        R = solve_handeye(calib_cam_dirs, calib_codes)
-        save_calib(args.out, R)
-        print("\n" + "=" * 60)
-        print("【标定成功！】手眼旋转矩阵 R 已保存至:", args.out)
-        print("R (相机系 -> 机器人基座系):\n", np.round(R, 4))
-        print("=" * 60)
+                    elif mode_type == "rot":
+                        if len(history_rot) < 5:
+                            print("⚠️ 采样点过少，请重新按 SPACE 录制。")
+                            continue
+                        r_diff = history_rot[-1] @ history_rot[0].T
+                        axis = np.array([r_diff[2, 1] - r_diff[1, 2],
+                                         r_diff[0, 2] - r_diff[2, 0],
+                                         r_diff[1, 0] - r_diff[0, 1]])
+                        ax_norm = np.linalg.norm(axis)
+                        if ax_norm < 1e-4:
+                            print("⚠️ 旋转偏角过小，请重新做翻腕/压腕动作。")
+                            continue
+                        unit_rot_axis = axis / ax_norm
+                        calib_cam_dirs.append(unit_rot_axis)
+                        calib_task_codes.append(task_code)
+                        print(f"✓ [{step_title}] 采样成功: 旋转轴矢量: {np.round(unit_rot_axis, 3)}")
 
-        done_img = np.zeros((720, 960, 3), dtype=np.uint8)
-        cv2.putText(done_img, "CALIBRATION SUCCESSFUL!", (200, 250),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-        cv2.putText(done_img, f"Matrix R saved to: {args.out}", (150, 320),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(done_img, "Press any key to exit", (320, 420),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 255), 2)
-        cv2.imshow(win_name, done_img)
-        cv2.waitKey(2000)
+                    current_step += 1
+                    if current_step >= len(steps):
+                        # 5 步全部完成，求解 R 并进入沙盒验证
+                        solved_R = solve_handeye(calib_cam_dirs, calib_task_codes)
+                        in_sandbox = True
+                        print("\n" + "=" * 60)
+                        print("🎉 5 步采样全部完成！已计算出正交变换矩阵 R:")
+                        print(np.round(solved_R, 4))
+                        print("现在进入【实时沙盒验证模式】，可在窗口中自由挥手确认方向。")
+                        print("确认满意后，按 [Y] 或 [SPACE] 键保存，按 [R] 键重试。")
+                        print("=" * 60)
 
     finally:
         cv2.destroyAllWindows()
-        tracker.close()
 
 
 if __name__ == "__main__":

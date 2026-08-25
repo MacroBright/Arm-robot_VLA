@@ -124,10 +124,11 @@ cd ~/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA
 #### 常用命令行参数说明：
 - `--iface can0`：指定 SocketCAN 接口名称（默认 `can0`）；
 - `-y` 或 `--gravity-confirm`：**必须携带**，显式二次确认使能重力关节（J2/J3）扭矩；
-- `--speed-scale <float>`：全局速度缩放系数（`0.01` ~ `1.0`，默认 `1.0`）；
+- `--speed-scale <float>`：平移线速度缩放系数（`0.01` ~ `1.0`，默认 `1.0`）；
+- `--ang-scale <float>`：旋转角速度独立缩放系数（`0.01` ~ `1.0`，默认自动解耦为高灵敏度 `0.8`）；
 - `--calib <path>`：指定手眼标定矩阵文件路径（默认 `scripts/teleop/handeye_calib.json`）；
 - `--out <path>`：指定多模态训练数据集录制目录（默认 `datasets/teleop_real`）；
-- `--no-drive`：空跑模式开关。
+- `--no-drive`：空跑模式开关（无硬件，仅开 OpenCV 遥操画面）。
 
 ---
 

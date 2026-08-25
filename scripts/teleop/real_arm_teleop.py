@@ -676,11 +676,11 @@ def main():
             elif out["action"] == "READY":
                 print("[姿态] 正在安全同步运动至按摩准备姿态 (READY)...")
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
             elif out["action"] == "HOME":
                 print("[姿态] 正在安全同步运动至上电初始姿态 (HOME)...")
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
 
             # ~12 Hz 周期轮询 6 关节 all status (pos + current + flag)
             if now - last_joint_poll[0] >= 0.08:
@@ -700,32 +700,32 @@ def main():
             if k in (ord("m"), ord("M")):
                 current_mode[0] = (current_mode[0] % 4) + 1
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[current_mode[0]]}")
             elif k == ord("1"):
                 current_mode[0] = MODE_KNEAD
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_KNEAD]}")
             elif k == ord("2"):
                 current_mode[0] = MODE_ROLL
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_ROLL]}")
             elif k == ord("3"):
                 current_mode[0] = MODE_PITCH
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_PITCH]}")
             elif k == ord("4"):
                 current_mode[0] = MODE_FULL
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_FULL]}")
             elif k in (ord("c"), ord("C")):
                 # 按 C 键即时重校准姿态零点
                 anchor_r_hand[0] = None
-                current_theta_tracked[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
                 print("[校准] 手势姿态零点已重新校准 (Re-centered)")
             curr_key = k if k != 255 else -1
             try:

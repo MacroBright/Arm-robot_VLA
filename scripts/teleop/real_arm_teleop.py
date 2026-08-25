@@ -213,9 +213,9 @@ MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "pitch": MODE_PITCH, "full":
 
 # 灵敏度档位系统 (Sensitivity Speed Gears):
 # 灵敏度档位系统 (Sensitivity Speed Gears):
-# 档位 1: 低速档 (Low Gear / 50% 速度, 穴位对准/精细按摩/安全慢速)
-# 档位 2: 中速档 (Mid Gear / 80% 速度, 标准推拿揉捏/平稳高效, 默认)
-# 档位 3: 高速档 (High Gear / 150% 速度, 超高灵敏大范围快速换位/跨区域移位, 极速跟手)
+# 档位 1: 低速档 (Low Gear / 75% 速度, 穴位对准/精细按摩/安全慢速)
+# 档位 2: 中速档 (Mid Gear / 120% 速度, 标准推拿揉捏/平稳高效, 默认)
+# 档位 3: 高速档 (High Gear / 225% 速度, 超高灵敏大范围快速换位/跨区域移位, 极速跟手)
 GEAR_FINE = 1
 GEAR_STANDARD = 2
 GEAR_FAST = 3
@@ -225,25 +225,25 @@ GEAR_CONFIGS = {
         "name": "1.低速档",
         "badge": "LOW",
         "color": (0, 230, 100),       # 浅绿色
-        "lin_scale": 0.50,
-        "gain_xyz": 1.6,
-        "max_omega": 1.8,
+        "lin_scale": 0.75,
+        "gain_xyz": 2.0,
+        "max_omega": 2.7,
     },
     GEAR_STANDARD: {
         "name": "2.中速档",
         "badge": "MID",
         "color": (0, 220, 255),       # 明黄色
-        "lin_scale": 0.80,
-        "gain_xyz": 2.2,
-        "max_omega": 2.6,
+        "lin_scale": 1.20,
+        "gain_xyz": 2.8,
+        "max_omega": 3.9,
     },
     GEAR_FAST: {
         "name": "3.高速档",
         "badge": "HIGH",
         "color": (0, 120, 255),       # 亮橙色
-        "lin_scale": 1.50,
-        "gain_xyz": 3.0,
-        "max_omega": 3.6,
+        "lin_scale": 2.25,
+        "gain_xyz": 3.8,
+        "max_omega": 5.4,
     },
 }
 
@@ -446,9 +446,9 @@ def main():
     else:
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
         from lerobot_robot_massage.zdt.controller import ZdtController  # noqa: E402
-        ctrl = ZdtController(ZdtConfig(channel=args.iface, max_vel_mm_s=250.0, max_ang_rad_s=4.5,
-                                       max_joint_vel_deg_s=240.0, max_joint_acc_deg_s2=800.0))
-        adapter = RealArmAdapter(ctrl, max_dq_deg=15.0)
+        ctrl = ZdtController(ZdtConfig(channel=args.iface, speed_rpm=2000.0, max_vel_mm_s=380.0, max_ang_rad_s=6.0,
+                                       max_joint_vel_deg_s=360.0, max_joint_acc_deg_s2=1200.0))
+        adapter = RealArmAdapter(ctrl, max_dq_deg=20.0)
 
     watchdog = VisionWatchdog()
     recorder = EpisodeRecorder(args.out)
@@ -468,14 +468,14 @@ def main():
 
     # 姿态控制与推拿模态跟踪变量
     current_mode = [MODE_MAP.get(args.mode, MODE_KNEAD)]
-    current_gear = [GEAR_STANDARD]  # 默认 2 档 (中速档 80%)
+    current_gear = [GEAR_STANDARD]  # 默认 2 档 (中速档 120%)
     anchor_r_hand = [None]
 
     # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale / 摇杆参数
-    lin_scale = max(0.01, min(3.0, float(args.speed_scale)))
-    gain_xyz = max(1.0, min(4.0, float(getattr(args, "gain_xyz", 2.2))))
-    ang_scale = max(0.01, min(1.5, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
-    max_omega = max(0.2, min(5.0, float(getattr(args, "max_omega", 3.6))))
+    lin_scale = max(0.01, min(4.0, float(args.speed_scale)))
+    gain_xyz = max(1.0, min(5.0, float(getattr(args, "gain_xyz", 2.2))))
+    ang_scale = max(0.01, min(2.0, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
+    max_omega = max(0.2, min(7.0, float(getattr(args, "max_omega", 5.4))))
     deadband_angle = max(1.0, min(15.0, float(getattr(args, "deadband_angle", 5.0))))
     smooth_v_base = [np.zeros(3)]
     smooth_w_base = [np.zeros(3)]

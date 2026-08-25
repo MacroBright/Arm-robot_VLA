@@ -277,7 +277,8 @@ def main():
                     else:
                         r_diff = r_hand @ anchor_r_hand[0].T
                         d_roll_raw = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
-                        d_pitch_raw = float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
+                        # 符号对齐: 取反 Pitch 分量，确保手腕向下压扣 -> 低头下扣 (d_pitch < 0); 手腕向上抬起 -> 抬头扬起 (d_pitch > 0)
+                        d_pitch_raw = -float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
 
                         # 模态过滤
                         if sandbox_mode[0] == 1:
@@ -302,7 +303,7 @@ def main():
                 y_tag = "【+Y 向左平移】" if v_b[1] > 10 else ("【-Y 向右平移】" if v_b[1] < -10 else "静止")
                 z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
                 roll_tag = "【向右滚转】" if d_roll > 0 else ("【向左滚转】" if d_roll < 0 else "水平 (死区内)")
-                pitch_tag = "【向下点头】" if d_pitch > 0 else ("【向上抬头】" if d_pitch < 0 else "水平 (死区内)")
+                pitch_tag = "【向下低头】" if d_pitch < -5.0 else ("【向上抬头】" if d_pitch > 5.0 else "水平 (死区内)")
                 if sandbox_mode[0] == 1:
                     roll_tag, pitch_tag = "【姿态锁定】", "【姿态锁定】"
                 elif sandbox_mode[0] == 2:

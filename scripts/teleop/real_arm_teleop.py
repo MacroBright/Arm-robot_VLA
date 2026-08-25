@@ -512,7 +512,7 @@ def main():
         v_base = (0.0, 0.0, 0.0)
         w_base = (0.0, 0.0, 0.0)
 
-        # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 14mm/s 独立死区 + 跨轴正交抑制 + 80mm/s 硬限幅 + EMA低通滤波 + 全局速度缩放
+        # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 14mm/s 独立死区 + 跨轴正交抑制 + 0.25/0.75 EMA低通滤波 (与沙盒100%对齐)
         v_target = np.zeros(3)
         dt = 0.05
         if last_wrist[0] is not None and last_t[0] is not None:
@@ -520,23 +520,22 @@ def main():
             if 0.001 < measured_dt < 0.5:
                 dt = measured_dt
                 v_cam = (wrist_cam - last_wrist[0]) / dt
-                v_b = r_cam_to_base @ v_cam
-                # 14 mm/s 单轴独立死区过滤
+                v_b_raw = r_cam_to_base @ v_cam
+                # 14 mm/s 单轴独立死区过滤 (彻底切除微幅生理手震与视觉散斑)
                 v_b_clamped = np.zeros(3)
                 for i in range(3):
-                    if abs(v_b[i]) > 14.0:
-                        scaled_i = np.sign(v_b[i]) * min(80.0, (abs(v_b[i]) - 14.0) * 1.25)
-                        v_b_clamped[i] = scaled_i
+                    if abs(v_b_raw[i]) > 14.0:
+                        v_b_clamped[i] = v_b_raw[i]
                 # 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 30% 视为微震耦合并清零
-                max_axis = float(np.max(np.abs(v_b_clamped)))
-                if max_axis > 20.0:
+                max_axis_val = float(np.max(np.abs(v_b_clamped)))
+                if max_axis_val > 22.0:
                     for i in range(3):
-                        if abs(v_b_clamped[i]) < 0.30 * max_axis:
+                        if abs(v_b_clamped[i]) < 0.30 * max_axis_val:
                             v_b_clamped[i] = 0.0
                 v_target = v_b_clamped
 
-        # EMA 低通滤波 (α=0.30)，平稳响应消除采样离散抖动
-        smooth_v_base[0] = 0.30 * v_target + 0.70 * smooth_v_base[0]
+        # EMA 低通滤波 (α=0.25)，与沙盒测试 100% 保持一致，平稳响应消除采样离散抖动
+        smooth_v_base[0] = 0.25 * v_target + 0.75 * smooth_v_base[0]
         if np.linalg.norm(smooth_v_base[0]) < 1.0:
             smooth_v_base[0] = np.zeros(3)
         # 乘以平移线速度缩放比例 lin_scale
@@ -569,6 +568,8 @@ def main():
 
             # 将人手旋转矢量转换至机械臂基座系
             theta_base_raw = r_cam_to_base @ theta_cam
+            # 符号对齐: 取反 Pitch 分量，确保手腕向下压扣 -> 机械臂末端低头下扣; 手腕向上抬起 -> 机械臂末端抬头扬起
+            theta_base_raw[1] = -theta_base_raw[1]
 
             # 方案 2: 推拿模态解耦约束 (Tuina Modes)
             m = current_mode[0]

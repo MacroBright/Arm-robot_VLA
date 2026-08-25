@@ -65,9 +65,14 @@ class CartesianController:
                  dt_min_factor: Optional[float] = None,
                  dt_max_factor: Optional[float] = None,
                  stale_cmd_max_s: Optional[float] = None,
+                 joint_factors: Optional[list[float]] = None,
                  clock: Callable[[], float] = time.monotonic):
         cfg = ctrl.config
         self.ctrl = ctrl
+        self.joint_factors = np.asarray(
+            joint_factors if joint_factors is not None
+            else getattr(cfg, "joint_speed_factors", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            dtype=float)
         self.max_vel_mm_s = (max_vel_mm_s if max_vel_mm_s is not None
                              else cfg.max_vel_mm_s)
         self.max_ang_rad_s = (max_ang_rad_s if max_ang_rad_s is not None
@@ -226,6 +231,7 @@ class CartesianController:
         twist = np.append(v * dt, w * dt) * scale
         weights = [1.0, 1.0, 1.0] + [self.orient_weight] * 3
         dq = damped_ls(J, twist, lam, weights=weights)
+        dq = dq * self.joint_factors
 
         # 预测关节限位缩放 (margin 渐进, 只渐进减速; 硬拒绝交给 check_limits_real)
         dq_scaled = self._scale_toward_limits(q_src, dq)

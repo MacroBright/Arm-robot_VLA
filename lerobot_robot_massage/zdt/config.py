@@ -122,6 +122,9 @@ class ZdtConfig:
     position_acc: int = 0
     reduction_ratios: list[float] = field(
         default_factory=lambda: list(DEFAULT_REDUCTION_RATIOS))
+    # 关节独立速度补偿因子 (通用默认 1.0x, 遥操中可独立指定如 [2.0, 2.0, 2.0, 2.0, 1.0, 2.0])
+    joint_speed_factors: list[float] = field(
+        default_factory=lambda: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
     # 0x36 pos → 真实输出角度 标定表 (默认整机 CALIB). 经 (pos - b) / k 换算,
     # 与 interactive `anchor` / zdt_anchor.py 结论一致. 测试可传 [(1.0, 0.0)]*6
     # 保持 1:1 直观换算; None = 退化为纯减速比 (未标定参考).

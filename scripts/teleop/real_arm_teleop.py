@@ -414,6 +414,8 @@ def main():
                     help="摇杆模式最大角速度 (rad/s, 默认 3.0)")
     ap.add_argument("--deadband-angle", type=float, default=5.0,
                     help="摇杆模式倾斜死区角度 (deg, 默认 5.0)")
+    ap.add_argument("--joint-factors", default="2.0,2.0,2.0,2.0,1.0,2.0",
+                    help="各关节独立速度倍率因子 J1..J6 (默认 2.0,2.0,2.0,2.0,1.0,2.0, 其中 J5=1.0x 保持不变, 其余 51:1 关节提升 2.0x)")
     args = ap.parse_args()
     if not args.gravity_confirm and not args.no_drive:
         sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (空跑测试请加 --no-drive)")
@@ -444,12 +446,21 @@ def main():
         adapter = NoDriveArmAdapter()
         print("[模式] 已启用 --no-drive 空跑测试模式 (仅做视觉追踪与显示计算，不连接 CAN 总线)")
     else:
+        # 解析各关节速度因子
+        try:
+            joint_factors = [float(x.strip()) for x in args.joint_factors.split(",") if x.strip()]
+            if len(joint_factors) != 6:
+                joint_factors = [2.0, 2.0, 2.0, 2.0, 1.0, 2.0]
+        except Exception:
+            joint_factors = [2.0, 2.0, 2.0, 2.0, 1.0, 2.0]
+
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
         from lerobot_robot_massage.zdt.controller import ZdtController  # noqa: E402
         ctrl = ZdtController(ZdtConfig(channel=args.iface, speed_rpm=2800.0, position_acc=0,
+                                       joint_speed_factors=joint_factors,
                                        max_vel_mm_s=600.0, max_ang_rad_s=10.0,
                                        max_joint_vel_deg_s=540.0, max_joint_acc_deg_s2=2000.0))
-        adapter = RealArmAdapter(ctrl, max_dq_deg=30.0)
+        adapter = RealArmAdapter(ctrl, max_dq_deg=30.0, joint_factors=joint_factors)
 
     watchdog = VisionWatchdog()
     recorder = EpisodeRecorder(args.out)

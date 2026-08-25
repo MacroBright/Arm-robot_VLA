@@ -299,8 +299,8 @@ def main():
 
                 # 中文动作映射实时解析
                 mode_names = {1: "1.点按揉捏(锁定)", 2: "2.滚法(单轴Roll)", 3: "3.俯仰调节(单轴Pitch)", 4: "4.全6DOF(全姿态)"}
-                x_tag = "【+X 前进延伸】" if v_b[0] > 10 else ("【-X 后退收缩】" if v_b[0] < -10 else "静止")
-                y_tag = "【+Y 向左平移】" if v_b[1] > 10 else ("【-Y 向右平移】" if v_b[1] < -10 else "静止")
+                x_tag = "【+X 向左平移】" if v_b[0] > 10 else ("【-X 向右平移】" if v_b[0] < -10 else "静止")
+                y_tag = "【-Y 前进延伸】" if v_b[1] < -10 else ("【+Y 后退收缩】" if v_b[1] > 10 else "静止")
                 z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
                 roll_tag = "【向右滚转】" if d_roll > 0 else ("【向左滚转】" if d_roll < 0 else "水平 (死区内)")
                 pitch_tag = "【向下低头】" if d_pitch < -5.0 else ("【向上抬头】" if d_pitch > 5.0 else "水平 (死区内)")
@@ -317,10 +317,10 @@ def main():
 
                 cv2.putText(bgr, f"推拿模态: {mode_names[sandbox_mode[0]]} (按M切换)", (25, 120),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 255), 1)
-                cv2.putText(bgr, f"平移 X(前后): {v_b[0]:+5.1f} mm/s -> {x_tag}", (25, 148),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
-                cv2.putText(bgr, f"平移 Y(左右): {v_b[1]:+5.1f} mm/s -> {y_tag}", (25, 175),
+                cv2.putText(bgr, f"平移 X(左右): {v_b[0]:+5.1f} mm/s -> {x_tag}", (25, 148),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 1)
+                cv2.putText(bgr, f"平移 Y(前后): {v_b[1]:+5.1f} mm/s -> {y_tag}", (25, 175),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
                 cv2.putText(bgr, f"平移 Z(上下): {v_b[2]:+5.1f} mm/s -> {z_tag}", (25, 202),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 180, 0), 1)
                 cv2.putText(bgr, f"旋转 Roll : {d_roll:+5.1f} deg  -> {roll_tag}", (25, 232),

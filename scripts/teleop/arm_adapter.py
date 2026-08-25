@@ -98,10 +98,16 @@ class NoDriveArmAdapter:
     def step_pose(self, p_des, R_des, **kw) -> None:
         pass
 
+    def re_arm(self, gravity_confirmed: bool = True) -> None:
+        if self._phase == "STOPPED":
+            self._phase = "TELEOP"
+
     def ready(self) -> None:
+        self._phase = "TELEOP"
         self._q = [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
 
     def home(self) -> None:
+        self._phase = "TELEOP"
         self._q = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     def reset(self) -> None:
@@ -139,6 +145,16 @@ class RealArmAdapter:
     def exit_teleop(self) -> None:
         self._ctrl.exit_teleop()
 
+    def re_arm(self, gravity_confirmed: bool = True) -> None:
+        """从 STOPPED / FAULT 状态安全恢复至 ARMED / TELEOP 状态."""
+        try:
+            if self._ctrl.robot.phase.name in ("STOPPED", "FAULT"):
+                self._ctrl.robot.re_arm(confirmed=True)
+                self._ctrl.arm(gravity_confirmed=gravity_confirmed)
+                self._ctrl.enter_teleop()
+        except Exception:
+            pass
+
     def disconnect(self) -> None:
         try:
             if self._ctrl.robot.phase.name in ("ARMED", "TELEOP"):
@@ -174,10 +190,12 @@ class RealArmAdapter:
 
     def ready(self) -> None:
         """安全运动至按摩准备姿态 (READY_POSE_DEG=[0,60,50,0,120,0]), 100 RPM 同步."""
+        self.re_arm(gravity_confirmed=True)
         self._cart.ready()
 
     def home(self) -> None:
         """安全运动回上电初始姿态 (JOINT_INIT_ANGLE_DEG=[0,0,0,0,0,0]), 100 RPM 同步."""
+        self.re_arm(gravity_confirmed=True)
         self._cart.home()
 
     def reset(self) -> None:

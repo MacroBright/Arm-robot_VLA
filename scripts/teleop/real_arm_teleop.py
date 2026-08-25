@@ -90,11 +90,11 @@ class RealArmTeleop:
                     "clutch": self.clutch_active}
         if key in (ord("r"), ord("R")):
             try:
-                if self.adapter.state() == "STOPPED":
-                    self.adapter.arm(gravity_confirmed=True)
+                if hasattr(self.adapter, "re_arm") and self.adapter.state() == "STOPPED":
+                    self.adapter.re_arm(gravity_confirmed=True)
                 self.adapter.ready()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(f"[READY] {exc}")
             self.watchdog.reset()
             self.clutch_active = False
             return {"action": "READY", "cmd": CartesianCommand((0.0, 0.0, 0.0)),
@@ -102,17 +102,22 @@ class RealArmTeleop:
                     "clutch": False}
         if key in (ord("o"), ord("O"), ord("0"), ord("h"), ord("H")):
             try:
-                if self.adapter.state() == "STOPPED":
-                    self.adapter.arm(gravity_confirmed=True)
+                if hasattr(self.adapter, "re_arm") and self.adapter.state() == "STOPPED":
+                    self.adapter.re_arm(gravity_confirmed=True)
                 self.adapter.home()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(f"[HOME] {exc}")
             self.watchdog.reset()
             self.clutch_active = False
             return {"action": "HOME", "cmd": CartesianCommand((0.0, 0.0, 0.0)),
                     "phase": self.adapter.state(),
                     "clutch": False}
-        if key == 32:  # SPACE bar: Toggle clutch
+        if key == 32:  # SPACE bar: Toggle clutch / Re-arm from E-stop
+            if self.adapter.state() == "STOPPED":
+                if hasattr(self.adapter, "re_arm"):
+                    self.adapter.re_arm(gravity_confirmed=True)
+                self.watchdog.reset()
+                print("[恢复] 机械臂已解除急停锁定并重新使能 (Re-armed)")
             self.toggle_clutch(now)
 
         if not self.clutch_active:
@@ -293,11 +298,11 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
     ang = cmd.angular_velocity if cmd else (0.0, 0.0, 0.0)
 
     if clutch_active and action != "ESTOP":
-        x_dir = "前" if vel[0] > 4 else ("后" if vel[0] < -4 else "-")
-        y_dir = "左" if vel[1] > 4 else ("右" if vel[1] < -4 else "-")
+        x_dir = "左" if vel[0] > 4 else ("右" if vel[0] < -4 else "-")
+        y_dir = "后" if vel[1] > 4 else ("前" if vel[1] < -4 else "-")
         z_dir = "上" if vel[2] > 4 else ("下" if vel[2] < -4 else "-")
-        spd_txt = f"v_lin: [{vel[0]:+5.1f}({x_dir}), {vel[1]:+5.1f}({y_dir}), {vel[2]:+5.1f}({z_dir})] mm/s"
-        cv2.putText(bgr, spd_txt, (15, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+        spd_txt = f"v_lin: [X(左右):{vel[0]:+4.0f}({x_dir}), Y(前后):{vel[1]:+4.0f}({y_dir}), Z(上下):{vel[2]:+4.0f}({z_dir})] mm/s"
+        cv2.putText(bgr, spd_txt, (15, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
 
         roll_dir = "右滚" if ang[0] > 0.05 else ("左滚" if ang[0] < -0.05 else "")
         pitch_dir = "低头" if ang[1] < -0.05 else ("抬头" if ang[1] > 0.05 else "")

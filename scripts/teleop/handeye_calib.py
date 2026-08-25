@@ -288,7 +288,7 @@ def main():
                         theta_b = solved_R @ theta_cam
 
                         # 虚拟手势摇杆速率响应 (倾斜持续转动，回平死区保持锁定)
-                        def _joy(angle_deg: float, deadband: float = 5.0, max_ang: float = 28.0, max_w: float = 1.20) -> float:
+                        def _joy(angle_deg: float, deadband: float = 5.0, max_ang: float = 28.0, max_w: float = 3.0) -> float:
                             abs_ang = abs(angle_deg)
                             if abs_ang <= deadband:
                                 return 0.0
@@ -297,8 +297,8 @@ def main():
 
                         hand_pitch = float(np.degrees(theta_b[0]))
                         hand_roll = float(np.degrees(theta_b[1]))
-                        w_pitch_raw = _joy(hand_pitch, deadband=5.0, max_ang=22.0, max_w=1.20)
-                        w_roll_raw = _joy(hand_roll, deadband=5.0, max_ang=28.0, max_w=1.20)
+                        w_pitch_raw = _joy(hand_pitch, deadband=5.0, max_ang=22.0, max_w=3.0)
+                        w_roll_raw = _joy(hand_roll, deadband=5.0, max_ang=28.0, max_w=3.0)
 
                         # 模态过滤
                         if sandbox_mode[0] == 1:

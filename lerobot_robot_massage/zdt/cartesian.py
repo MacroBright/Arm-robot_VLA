@@ -51,7 +51,7 @@ class CartesianController:
                  joint_limits: Optional[list[tuple[float, float]]] = None,
                  ik_lambda: float = 10.0,
                  orient_weight: float = 20.0,
-                 max_dq_deg: float = 2.0,
+                 max_dq_deg: float = 10.0,
                  max_ang_rad_s: Optional[float] = None,
                  max_joint_vel_deg_s: Optional[float] = None,
                  max_joint_acc_deg_s2: Optional[float] = None,

@@ -364,12 +364,12 @@ def main():
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
     ap.add_argument("--mode", choices=["knead", "roll", "pitch", "full"], default="knead",
                     help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
-    ap.add_argument("--speed-scale", type=float, default=1.0,
-                    help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 1.0)")
+    ap.add_argument("--speed-scale", type=float, default=0.50,
+                    help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 0.50 对应 50%)")
     ap.add_argument("--ang-scale", type=float, default=1.0,
                     help="全局旋转角速度独立缩放比例 (0.1 ~ 1.5, 默认 1.0 高响应平滑)")
-    ap.add_argument("--max-omega", type=float, default=1.2,
-                    help="摇杆模式最大角速度 (rad/s, 默认 1.2)")
+    ap.add_argument("--max-omega", type=float, default=3.0,
+                    help="摇杆模式最大角速度 (rad/s, 默认 3.0)")
     ap.add_argument("--deadband-angle", type=float, default=5.0,
                     help="摇杆模式倾斜死区角度 (deg, 默认 5.0)")
     args = ap.parse_args()
@@ -404,7 +404,8 @@ def main():
     else:
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
         from lerobot_robot_massage.zdt.controller import ZdtController  # noqa: E402
-        ctrl = ZdtController(ZdtConfig(channel=args.iface))
+        ctrl = ZdtController(ZdtConfig(channel=args.iface, max_vel_mm_s=80.0, max_ang_rad_s=3.5,
+                                       max_joint_vel_deg_s=180.0, max_joint_acc_deg_s2=500.0))
         adapter = RealArmAdapter(ctrl)
 
     watchdog = VisionWatchdog()
@@ -430,12 +431,12 @@ def main():
     # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale / 摇杆参数
     lin_scale = max(0.01, min(1.0, float(args.speed_scale)))
     ang_scale = max(0.01, min(1.5, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
-    max_omega = max(0.2, min(2.5, float(getattr(args, "max_omega", 1.2))))
+    max_omega = max(0.2, min(5.0, float(getattr(args, "max_omega", 3.0))))
     deadband_angle = max(1.0, min(15.0, float(getattr(args, "deadband_angle", 5.0))))
     smooth_v_base = [np.zeros(3)]
     smooth_w_base = [np.zeros(3)]
 
-    def _joystick_rate(angle_deg: float, deadband_deg: float = 5.0, max_angle_deg: float = 28.0, max_omega_val: float = 1.20) -> float:
+    def _joystick_rate(angle_deg: float, deadband_deg: float = 5.0, max_angle_deg: float = 28.0, max_omega_val: float = 3.0) -> float:
         """虚拟手势摇杆速率响应:
         - 倾斜角度在死区内 (|angle| <= deadband_deg): 返回 0.0 (锁定保持当前姿态)
         - 倾斜角度超过死区: 平滑输出正比于倾斜幅度的角速度 (持续持续转动)

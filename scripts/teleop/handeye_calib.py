@@ -145,6 +145,7 @@ def main():
     last_t = [None]
     anchor_r_hand = [None]
     smooth_v_base = np.zeros(3)
+    sandbox_mode = [1]
 
     try:
         while True:
@@ -267,7 +268,7 @@ def main():
                 last_wrist[0] = wrist_cam
                 last_t[0] = now
 
-                # 姿态旋转解算
+                # 姿态旋转解算 (绝对姿态跟随 + 推拿模态解耦)
                 d_roll_raw, d_pitch_raw = 0.0, 0.0
                 d_roll, d_pitch = 0.0, 0.0
                 if r_hand is not None:
@@ -278,39 +279,47 @@ def main():
                         d_roll_raw = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
                         d_pitch_raw = float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
 
-                        # 9.0° 独立轴死区过滤 (低于 9° 强制置零)
-                        if abs(d_roll_raw) > 9.0:
-                            d_roll = d_roll_raw
-                        if abs(d_pitch_raw) > 9.0:
-                            d_pitch = d_pitch_raw
-
-                        # 跨轴正交抑制 (Cross-Axis Rejection)
-                        if abs(d_roll) > 16.0 and abs(d_pitch) < 0.35 * abs(d_roll):
+                        # 模态过滤
+                        if sandbox_mode[0] == 1:
+                            # 模态 1: 垂直点按揉捏 (完全锁定)
+                            d_roll, d_pitch = 0.0, 0.0
+                        elif sandbox_mode[0] == 2:
+                            # 模态 2: 滚法一指禅 (仅开放 Roll)
+                            d_roll = d_roll_raw if abs(d_roll_raw) > 5.0 else 0.0
                             d_pitch = 0.0
-                        elif abs(d_pitch) > 16.0 and abs(d_roll) < 0.35 * abs(d_pitch):
-                            d_roll = 0.0
+                        else:
+                            # 模态 3: 全 6-DOF
+                            d_roll = d_roll_raw if abs(d_roll_raw) > 5.0 else 0.0
+                            d_pitch = d_pitch_raw if abs(d_pitch_raw) > 5.0 else 0.0
 
                 # 中文动作映射实时解析
+                mode_names = {1: "1.点按揉捏(锁定)", 2: "2.滚法(单轴Roll)", 3: "3.全6DOF(全姿态)"}
                 x_tag = "【+X 前进延伸】" if v_b[0] > 10 else ("【-X 后退收缩】" if v_b[0] < -10 else "静止")
                 y_tag = "【+Y 向左平移】" if v_b[1] > 10 else ("【-Y 向右平移】" if v_b[1] < -10 else "静止")
                 z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
                 roll_tag = "【向右滚转】" if d_roll > 0 else ("【向左滚转】" if d_roll < 0 else "水平 (死区内)")
                 pitch_tag = "【向下点头】" if d_pitch > 0 else ("【向上抬头】" if d_pitch < 0 else "水平 (死区内)")
+                if sandbox_mode[0] == 1:
+                    roll_tag, pitch_tag = "【姿态锁定】", "【姿态锁定】"
+                elif sandbox_mode[0] == 2:
+                    pitch_tag = "【姿态锁定】"
 
                 # 左侧数据面板
-                cv2.rectangle(bgr, (15, 100), (460, 265), (20, 20, 28), -1)
-                cv2.rectangle(bgr, (15, 100), (460, 265), (60, 60, 80), 1)
+                cv2.rectangle(bgr, (15, 95), (460, 275), (20, 20, 28), -1)
+                cv2.rectangle(bgr, (15, 95), (460, 275), (60, 60, 80), 1)
 
-                cv2.putText(bgr, f"平移 X(前后): {v_b[0]:+5.1f} mm/s -> {x_tag}", (25, 128),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 1)
-                cv2.putText(bgr, f"平移 Y(左右): {v_b[1]:+5.1f} mm/s -> {y_tag}", (25, 155),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 120), 1)
-                cv2.putText(bgr, f"平移 Z(上下): {v_b[2]:+5.1f} mm/s -> {z_tag}", (25, 182),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 180, 0), 1)
-                cv2.putText(bgr, f"旋转 Roll : {d_roll:+5.1f} deg  -> {roll_tag}", (25, 212),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (220, 220, 255), 1)
-                cv2.putText(bgr, f"旋转 Pitch: {d_pitch:+5.1f} deg  -> {pitch_tag}", (25, 240),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (220, 220, 255), 1)
+                cv2.putText(bgr, f"推拿模态: {mode_names[sandbox_mode[0]]} (按M切换)", (25, 120),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 255), 1)
+                cv2.putText(bgr, f"平移 X(前后): {v_b[0]:+5.1f} mm/s -> {x_tag}", (25, 148),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
+                cv2.putText(bgr, f"平移 Y(左右): {v_b[1]:+5.1f} mm/s -> {y_tag}", (25, 175),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 1)
+                cv2.putText(bgr, f"平移 Z(上下): {v_b[2]:+5.1f} mm/s -> {z_tag}", (25, 202),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 180, 0), 1)
+                cv2.putText(bgr, f"旋转 Roll : {d_roll:+5.1f} deg  -> {roll_tag}", (25, 232),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 255), 1)
+                cv2.putText(bgr, f"旋转 Pitch: {d_pitch:+5.1f} deg  -> {pitch_tag}", (25, 260),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 255), 1)
 
                 # 手腕圆环与牵引线
                 if px_coord is not None:
@@ -330,10 +339,23 @@ def main():
                 return
 
             if in_sandbox:
-                if k in (ord("c"), ord("C")):
+                if k in (ord("m"), ord("M")):
+                    sandbox_mode[0] = (sandbox_mode[0] % 3) + 1
+                    anchor_r_hand[0] = None
+                    print(f"[沙盒] 切换推拿姿态模式: {mode_names[sandbox_mode[0]]}")
+                elif k == ord("1"):
+                    sandbox_mode[0] = 1
+                    anchor_r_hand[0] = None
+                elif k == ord("2"):
+                    sandbox_mode[0] = 2
+                    anchor_r_hand[0] = None
+                elif k == ord("3"):
+                    sandbox_mode[0] = 3
+                    anchor_r_hand[0] = None
+                elif k in (ord("c"), ord("C")):
                     anchor_r_hand[0] = None
                     print("[沙盒] 姿态零位已重置 (Re-centered)。")
-                elif k in (ord("y"), ord("Y"), ord(" ")):
+                elif k in (ord("y"), ord("Y")):
                     save_calib(args.out, solved_R)
                     print("\n" + "=" * 60)
                     print(f"✅ 标定矩阵已成功保存至: {args.out}")

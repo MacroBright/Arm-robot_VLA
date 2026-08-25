@@ -192,6 +192,18 @@ class RealArmTeleop:
         self.recorder.add_record(obs, act, saf)
 
 
+MODE_KNEAD = 1
+MODE_ROLL = 2
+MODE_FULL = 3
+
+MODE_NAMES = {
+    MODE_KNEAD: "1. 垂直点按揉捏 (姿态锁定)",
+    MODE_ROLL:  "2. 滚法推法 (单轴滚转)",
+    MODE_FULL:  "3. 全 6-DOF (全姿态跟随)",
+}
+MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "full": MODE_FULL}
+
+
 def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
     """在 OpenCV 画面右下角绘制 6 关节 all status 实时监控表 (pos + current + flag)."""
     if joint_state is None:
@@ -235,7 +247,7 @@ def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
 
 def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
                   no_drive: bool = False, lin_scale: float = 1.0, ang_scale: float = 1.0,
-                  joint_state=None) -> None:
+                  joint_state=None, mode: int = MODE_KNEAD) -> None:
     """在 OpenCV 画面上绘制丰富图元 (状态横幅 + 离合徽标 + 锚定球 + 速度矢量 + 数值反馈 + 关节全状态表)."""
     import cv2
     h, w = bgr.shape[:2]
@@ -245,24 +257,26 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
     phase = out.get("phase", "N/A")
     action = out.get("action", "N/A")
 
-    # 顶部状态横幅
+    # 顶部状态横幅 (显示推拿模式)
+    mode_str = MODE_NAMES.get(mode, "")
     if action == "ESTOP" or phase == "STOPPED":
         cv2.rectangle(bgr, (0, 0), (w, 42), (0, 0, 200), -1)
         txt = f" {tag}[EMERGENCY STOP] Robot Locked! Press SPACE to Re-arm | Q: Quit"
         cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     elif clutch_active:
-        cv2.rectangle(bgr, (0, 0), (w, 42), (0, 150, 0), -1)
-        txt = f" {tag}[TELEOP ACTIVE]  SPACE: Pause | R: Ready | H: Home | Y: E-Stop | Q: Quit"
-        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        bar_color = (0, 130, 40) if mode == MODE_KNEAD else ((140, 90, 0) if mode == MODE_ROLL else (100, 0, 130))
+        cv2.rectangle(bgr, (0, 0), (w, 42), bar_color, -1)
+        txt = f" {tag}[遥操活跃] {mode_str} | [M] 切模式 | [C] 归零 | [SPACE] 暂停"
+        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
     else:
         cv2.rectangle(bgr, (0, 0), (w, 42), (0, 140, 220), -1)
-        txt = f" {tag}[CLUTCH PAUSED]  Press SPACE to Engage Teleop"
-        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        txt = f" {tag}[CLUTCH PAUSED] {mode_str} | Press SPACE to Engage Teleop"
+        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
     # 动作与状态机信息
     status_color = (0, 255, 0) if action == "OK" else ((0, 0, 255) if action == "ESTOP" else (0, 200, 255))
-    act_str = f"Action: {action} | Phase: {phase}"
-    cv2.putText(bgr, act_str, (15, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+    act_str = f"Action: {action} | Phase: {phase} | Mode: {mode_str}"
+    cv2.putText(bgr, act_str, (15, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 2)
 
     # 速度指令反馈
     cmd = out.get("cmd")
@@ -276,12 +290,12 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         spd_txt = f"v_lin: [{vel[0]:+5.1f}({x_dir}), {vel[1]:+5.1f}({y_dir}), {vel[2]:+5.1f}({z_dir})] mm/s"
         cv2.putText(bgr, spd_txt, (15, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
-        roll_dir = "右滚" if ang[0] > 0.08 else ("左滚" if ang[0] < -0.08 else "")
-        pitch_dir = "低头" if ang[1] < -0.08 else ("抬头" if ang[1] > 0.08 else "")
-        is_rot = np.linalg.norm(ang) > 0.04
+        roll_dir = "右滚" if ang[0] > 0.05 else ("左滚" if ang[0] < -0.05 else "")
+        pitch_dir = "低头" if ang[1] < -0.05 else ("抬头" if ang[1] > 0.05 else "")
+        is_rot = np.linalg.norm(ang) > 0.02
         ang_color = (0, 255, 255) if is_rot else (200, 200, 200)
         tags = [t for t in [roll_dir, pitch_dir] if t]
-        rot_tag = f" [{' '.join(tags)}]" if tags else ""
+        rot_tag = f" [{' '.join(tags)}]" if tags else (" [锁定中]" if mode == MODE_KNEAD else "")
         ang_txt = f"w_ang: [{ang[0]:+5.2f}, {ang[1]:+5.2f}, {ang[2]:+5.2f}] rad/s{rot_tag}"
         cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ang_color, 2)
     else:
@@ -291,30 +305,27 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         ang_txt = f"w_ang: [ +0.00,  +0.00,  +0.00] rad/s [{pause_hint}]"
         cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 180, 255), 1)
 
-    # 手部相对中立偏角 (Joystick Deflection Tilt)
+    # 手部目标偏角显示 (Absolute Desired Angles)
     if hand_info and "d_pitch_deg" in hand_info and "d_roll_deg" in hand_info:
         tilt_status = "" if clutch_active else " (PAUSED)"
-        pose_txt = (f"Joystick Tilt: dPitch: {hand_info['d_pitch_deg']:+5.1f} deg | "
-                    f"dRoll: {hand_info['d_roll_deg']:+5.1f} deg{tilt_status}")
+        pose_txt = (f"Target Pose: Roll: {hand_info['d_roll_deg']:+5.1f}° | "
+                    f"Pitch: {hand_info['d_pitch_deg']:+5.1f}°{tilt_status}")
         cv2.putText(bgr, pose_txt, (15, 146), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 230, 255), 1)
 
-    # 右上角绘制 6 关节 all status 实时监测表
+    # 右下角绘制 6 关节 all status 实时监测表
     if joint_state is not None:
         _draw_joint_status_table(bgr, joint_state, no_drive=no_drive)
 
     # 绘制手腕锚点与速度矢量线
     if hand_info and hand_info.get("px_coord") is not None:
         u, v = hand_info["px_coord"]
-        circle_color = (0, 0, 255) if phase == "STOPPED" else ((0, 255, 0) if clutch_active else (0, 165, 255))
-        cv2.circle(bgr, (int(u), int(v)), 10, circle_color, -1)
-        cv2.circle(bgr, (int(u), int(v)), 14, (255, 255, 255), 2)
-
-        # 绘制速度矢量箭头 (平滑限幅)
-        dx = int(np.clip(vel[0] * 1.5, -80, 80))
-        dy = int(np.clip(-vel[1] * 1.5, -80, 80))
-        if abs(dx) > 3 or abs(dy) > 3:
-            end_pt = (int(u + dx), int(v + dy))
-            cv2.arrowedLine(bgr, (int(u), int(v)), end_pt, (255, 50, 50), 3, tipLength=0.3)
+        cv2.circle(bgr, (u, v), 8, (0, 255, 0), -1)
+        cv2.circle(bgr, (u, v), 12, (255, 255, 255), 2)
+        if clutch_active and cmd:
+            dx = int(np.clip(cmd.linear_velocity[1] * -1.2, -60, 60))
+            dy = int(np.clip(cmd.linear_velocity[0] * -1.2, -60, 60))
+            if abs(dx) > 3 or abs(dy) > 3:
+                cv2.arrowedLine(bgr, (u, v), (u + dx, v + dy), (0, 255, 255), 2, tipLength=0.3)
 
 
 def main():
@@ -325,6 +336,8 @@ def main():
     ap.add_argument("-y", "--gravity-confirm", action="store_true",
                     help="确认重力关节 J2/J3 二次确认 (真机驱动必须)")
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
+    ap.add_argument("--mode", choices=["knead", "roll", "full"], default="knead",
+                    help="推拿遥操姿态模式: knead(点按揉捏姿态锁定), roll(滚法单轴), full(全6DOF自由)")
     ap.add_argument("--speed-scale", type=float, default=1.0,
                     help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 1.0)")
     ap.add_argument("--ang-scale", type=float, default=None,
@@ -380,7 +393,9 @@ def main():
     loss_count = [0]
     last_valid_info = [None]
 
-    # 方案 A (摇杆偏角速率模式): 姿态中立位锚点
+    # 姿态控制与推拿模态跟踪变量
+    current_mode = [MODE_MAP.get(args.mode, MODE_KNEAD)]
+    current_theta_tracked = [np.zeros(3)]
     anchor_r_hand = [None]
     anchor_pitch = [0.0]
     anchor_roll = [0.0]
@@ -481,9 +496,11 @@ def main():
 
         # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 14mm/s 独立死区 + 跨轴正交抑制 + 80mm/s 硬限幅 + EMA低通滤波 + 全局速度缩放
         v_target = np.zeros(3)
+        dt = 0.05
         if last_wrist[0] is not None and last_t[0] is not None:
-            dt = now - last_t[0]
-            if 0.001 < dt < 0.5:
+            measured_dt = now - last_t[0]
+            if 0.001 < measured_dt < 0.5:
+                dt = measured_dt
                 v_cam = (wrist_cam - last_wrist[0]) / dt
                 v_b = r_cam_to_base @ v_cam
                 # 14 mm/s 单轴独立死区过滤
@@ -510,9 +527,10 @@ def main():
         last_wrist[0] = wrist_cam
         last_t[0] = now
 
-        # 2. 方案 A 摇杆偏角速率控制 (姿态): 严格基于 SO(3) 相对旋转解算，杜绝欧拉角奇异点
+        # 2. 方案 1 (绝对姿态 1:1 闭环伺服跟踪) + 方案 2 (推拿任务模态解耦约束)
         if anchor_r_hand[0] is None or not teleop.clutch_active:
             anchor_r_hand[0] = r_hand.copy()
+            current_theta_tracked[0] = np.zeros(3)
             smooth_w_base[0] = np.zeros(3)
             w_base = (0.0, 0.0, 0.0)
             d_pitch = 0.0
@@ -520,46 +538,49 @@ def main():
         else:
             # 相对旋转矩阵 R_rel (从锚点姿态到当前姿态的精确 3D 旋转)
             r_diff = r_hand @ anchor_r_hand[0].T
+            axis = np.array([r_diff[2, 1] - r_diff[1, 2],
+                             r_diff[0, 2] - r_diff[2, 0],
+                             r_diff[1, 0] - r_diff[0, 1]])
+            ax_norm = np.linalg.norm(axis)
             cos_ang = np.clip((np.trace(r_diff) - 1.0) / 2.0, -1.0, 1.0)
             ang_rad = float(np.arccos(cos_ang))
 
-            # 严格由 R_rel 提取相对偏转角
-            d_roll_raw = float(np.degrees(np.arctan2(r_diff[2, 1], r_diff[1, 1])))
-            d_pitch_raw = float(np.degrees(np.arctan2(r_diff[1, 0], r_diff[0, 0])))
+            theta_cam = np.zeros(3)
+            if ax_norm > 1e-6 and ang_rad > 1e-4:
+                theta_cam = (ang_rad / ax_norm) * axis
 
-            # 9.0° 独立轴死区过滤 (低于 9° 强制置零，彻底消除手平放时的静止漂移)
-            d_roll = d_roll_raw if abs(d_roll_raw) > 9.0 else 0.0
-            d_pitch = d_pitch_raw if abs(d_pitch_raw) > 9.0 else 0.0
+            # 将人手旋转矢量转换至机械臂基座系
+            theta_base_raw = r_cam_to_base @ theta_cam
 
-            # 跨轴正交抑制 (Cross-Axis Rejection)
-            if abs(d_roll) > 16.0 and abs(d_pitch) < 0.35 * abs(d_roll):
-                d_pitch = 0.0
-            elif abs(d_pitch) > 16.0 and abs(d_roll) < 0.35 * abs(d_pitch):
-                d_roll = 0.0
+            # 方案 2: 推拿模态解耦约束 (Tuina Modes)
+            m = current_mode[0]
+            if m == MODE_KNEAD:
+                # 模式 1: 垂直点按揉捏 (姿态完全锁定为零，彻底免疫五指揉捏时的一切干扰)
+                theta_des = np.zeros(3)
+            elif m == MODE_ROLL:
+                # 模式 2: 滚法一指禅 (仅保留沿机械臂前进轴 X 的滚转 Roll，Pitch 锁定)
+                theta_des = np.array([theta_base_raw[0], 0.0, 0.0])
+            else:
+                # 模式 3: 全 6-DOF 自由姿态闭环跟随
+                theta_des = theta_base_raw
 
-            # 9.0° 稳健死区 + 幂函数平滑起步过渡
-            ANG_DEADZONE_RAD = np.radians(9.0)
-            w_target = np.zeros(3)
-            if ang_rad > ANG_DEADZONE_RAD:
-                eff_ang = ang_rad - ANG_DEADZONE_RAD
-                axis = np.array([r_diff[2, 1] - r_diff[1, 2],
-                                 r_diff[0, 2] - r_diff[2, 0],
-                                 r_diff[1, 0] - r_diff[0, 1]])
-                ax_norm = np.linalg.norm(axis)
-                if ax_norm > 1e-6:
-                    MAX_DEFLECT_RAD = np.radians(26.0)  # 35° 满量程 - 9° 死区 = 26° 有效行程
-                    ratio = min(1.0, eff_ang / MAX_DEFLECT_RAD)
-                    # 1.3 次幂非线性平滑过渡：轻微偏出时平稳起步(0.02~0.05 rad/s)，深度翻腕迅速达到 0.8 rad/s
-                    raw_ang_vel = (ratio ** 1.3) * 0.8
-                    w_cam = raw_ang_vel * (axis / ax_norm)
-                    w_b = r_cam_to_base @ w_cam
-                    w_target = w_b * ang_scale
+            # 方案 1: 闭环绝对姿态伺服控制: w_target = Kp * (theta_des - current_theta_tracked)
+            # 手倾斜多少度，机械臂末端旋转多少度；手回平则臂回平，彻底免除寻找死区焦虑
+            e_ori = theta_des - current_theta_tracked[0]
+            Kp_ori = 3.5
+            w_target = np.clip(Kp_ori * e_ori, -0.80, 0.80) * ang_scale
 
-            # EMA 低通滤波 (α=0.30)，消除采样微震，死区内强制平滑归零
-            smooth_w_base[0] = 0.30 * w_target + 0.70 * smooth_w_base[0]
-            if np.linalg.norm(smooth_w_base[0]) < 0.02:
+            # 积分更新虚拟追踪姿态
+            current_theta_tracked[0] += w_target * dt
+
+            # EMA 低通平滑
+            smooth_w_base[0] = 0.35 * w_target + 0.65 * smooth_w_base[0]
+            if np.linalg.norm(smooth_w_base[0]) < 0.015:
                 smooth_w_base[0] = np.zeros(3)
             w_base = tuple(float(x) for x in smooth_w_base[0])
+
+            d_roll = float(np.degrees(theta_des[0]))
+            d_pitch = float(np.degrees(theta_des[1]))
 
         info = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
                 "wrist_mm": tuple(float(v) for v in pts[0]),
@@ -606,9 +627,11 @@ def main():
             elif out["action"] == "READY":
                 print("[姿态] 正在安全同步运动至按摩准备姿态 (READY)...")
                 anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
             elif out["action"] == "HOME":
                 print("[姿态] 正在安全同步运动至上电初始姿态 (HOME)...")
                 anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
 
             # ~12 Hz 周期轮询 6 关节 all status (pos + current + flag)
             if now - last_joint_poll[0] >= 0.08:
@@ -621,13 +644,34 @@ def main():
             if latest_frame[0] is not None:
                 _draw_overlay(latest_frame[0], out, latest_hand[0], teleop.clutch_active,
                               no_drive=args.no_drive, lin_scale=lin_scale, ang_scale=ang_scale,
-                              joint_state=cached_joint_state[0])
+                              joint_state=cached_joint_state[0], mode=current_mode[0])
                 cv2.imshow(WIN_NAME, latest_frame[0])
 
             k = cv2.waitKey(1) & 0xFF
-            if k in (ord("c"), ord("C")):
+            if k in (ord("m"), ord("M")):
+                current_mode[0] = (current_mode[0] % 3) + 1
+                anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
+                print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[current_mode[0]]}")
+            elif k == ord("1"):
+                current_mode[0] = MODE_KNEAD
+                anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
+                print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_KNEAD]}")
+            elif k == ord("2"):
+                current_mode[0] = MODE_ROLL
+                anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
+                print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_ROLL]}")
+            elif k == ord("3"):
+                current_mode[0] = MODE_FULL
+                anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
+                print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_FULL]}")
+            elif k in (ord("c"), ord("C")):
                 # 按 C 键即时重校准姿态零点
                 anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
                 print("[校准] 手势姿态零点已重新校准 (Re-centered)")
             curr_key = k if k != 255 else -1
             try:

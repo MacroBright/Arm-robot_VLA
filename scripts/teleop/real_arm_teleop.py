@@ -304,11 +304,11 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         spd_txt = f"v_lin: [X(左右):{vel[0]:+4.0f}({x_dir}), Y(前后):{vel[1]:+4.0f}({y_dir}), Z(上下):{vel[2]:+4.0f}({z_dir})] mm/s"
         cv2.putText(bgr, spd_txt, (15, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
 
-        roll_dir = "右滚" if ang[0] > 0.05 else ("左滚" if ang[0] < -0.05 else "")
-        pitch_dir = "低头" if ang[1] < -0.05 else ("抬头" if ang[1] > 0.05 else "")
+        pitch_dir = "低头" if ang[0] < -0.05 else ("抬头" if ang[0] > 0.05 else "")
+        roll_dir = "右滚" if ang[1] > 0.05 else ("左滚" if ang[1] < -0.05 else "")
         is_rot = np.linalg.norm(ang) > 0.02
         ang_color = (0, 255, 255) if is_rot else (200, 200, 200)
-        tags = [t for t in [roll_dir, pitch_dir] if t]
+        tags = [t for t in [pitch_dir, roll_dir] if t]
         if tags:
             rot_tag = f" [{' '.join(tags)}]"
         elif mode == MODE_KNEAD:
@@ -319,8 +319,8 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
             rot_tag = " [锁Roll/仅Pitch]"
         else:
             rot_tag = ""
-        ang_txt = f"w_ang: [{ang[0]:+5.2f}, {ang[1]:+5.2f}, {ang[2]:+5.2f}] rad/s{rot_tag}"
-        cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ang_color, 2)
+        ang_txt = f"w_ang: [Pitch:{ang[0]:+4.2f}, Roll:{ang[1]:+4.2f}] rad/s{rot_tag}"
+        cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.52, ang_color, 2)
     else:
         pause_hint = "PAUSED (Press SPACE)" if action != "ESTOP" else "LOCKED (ESTOP)"
         spd_txt = f"v_lin: [ +0.0,  +0.0,  +0.0] mm/s  [{pause_hint}]"
@@ -363,8 +363,8 @@ def main():
                     help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
     ap.add_argument("--speed-scale", type=float, default=1.0,
                     help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 1.0)")
-    ap.add_argument("--ang-scale", type=float, default=None,
-                    help="全局旋转角速度独立缩放比例 (0.01 ~ 1.0, 默认自动解耦为高响应 0.8)")
+    ap.add_argument("--ang-scale", type=float, default=1.0,
+                    help="全局旋转角速度独立缩放比例 (0.1 ~ 1.5, 默认 1.0 高响应平滑)")
     args = ap.parse_args()
     if not args.gravity_confirm and not args.no_drive:
         sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (空跑测试请加 --no-drive)")
@@ -425,8 +425,10 @@ def main():
 
     # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale
     lin_scale = max(0.01, min(1.0, float(args.speed_scale)))
-    ang_scale = max(0.01, min(1.0, float(args.ang_scale))) if args.ang_scale is not None else 0.8
+    ang_scale = max(0.01, min(1.5, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
     smooth_v_base = [np.zeros(3)]
+    smooth_theta_des = [np.zeros(3)]
+    prev_smooth_theta = [np.zeros(3)]
     smooth_w_base = [np.zeros(3)]
 
     def hand_provider():
@@ -549,9 +551,11 @@ def main():
         last_wrist[0] = wrist_cam
         last_t[0] = now
 
-        # 2. 方案 1 (绝对姿态 1:1 闭环伺服跟踪) + 方案 2 (推拿任务模态解耦约束)
+        # 2. 方案 1 (绝对姿态 1:1 前馈微分+闭环伺服跟踪) + 方案 2 (推拿任务模态解耦约束)
         if anchor_r_hand[0] is None or not teleop.clutch_active:
             anchor_r_hand[0] = r_hand.copy()
+            smooth_theta_des[0] = np.zeros(3)
+            prev_smooth_theta[0] = np.zeros(3)
             current_theta_tracked[0] = np.zeros(3)
             smooth_w_base[0] = np.zeros(3)
             w_base = (0.0, 0.0, 0.0)
@@ -573,41 +577,56 @@ def main():
 
             # 将人手旋转矢量转换至机械臂基座系
             theta_base_raw = r_cam_to_base @ theta_cam
-            # 符号对齐: 取反 Pitch 分量，确保手腕向下压扣 -> 机械臂末端低头下扣; 手腕向上抬起 -> 机械臂末端抬头扬起
-            theta_base_raw[1] = -theta_base_raw[1]
+            # 符号对齐: Pitch 符号对齐 (人手下压腕 -> 机械臂末端低头下扣; 人手抬腕 -> 机械臂末端抬头扬起)
+            theta_base_raw[0] = -theta_base_raw[0]
 
             # 方案 2: 推拿模态解耦约束 (Tuina Modes)
+            # 在机械臂基座系中:
+            # - Index 0 (绕 X_base) 为 Pitch (驱动 5 轴腕俯仰)
+            # - Index 1 (绕 Y_base) 为 Roll (驱动 4 轴前臂滚转)
+            # - Index 2 (绕 Z_base) 为 Yaw (驱动 1 轴底座偏摆)
             m = current_mode[0]
             if m == MODE_KNEAD:
                 # 模式 1: 垂直点按揉捏 (姿态全锁定，彻底免疫五指揉捏时的一切干扰)
                 theta_des = np.zeros(3)
             elif m == MODE_ROLL:
-                # 模式 2: 滚法推法 (仅保留沿机械臂前进轴 X 的滚转 Roll，Pitch 锁定)
-                theta_des = np.array([theta_base_raw[0], 0.0, 0.0])
-            elif m == MODE_PITCH:
-                # 模式 3: 俯仰调节 (仅保留沿机械臂横向轴 Y 的俯仰 Pitch，Roll 锁定)
+                # 模式 2: 滚法推法 (仅保留沿机械臂前进轴 Y 的滚转 Roll，Pitch 锁定)
                 theta_des = np.array([0.0, theta_base_raw[1], 0.0])
+            elif m == MODE_PITCH:
+                # 模式 3: 俯仰调节 (仅保留沿机械臂横向轴 X 的俯仰 Pitch，Roll 锁定)
+                theta_des = np.array([theta_base_raw[0], 0.0, 0.0])
             else:
                 # 模式 4: 全 6-DOF 自由姿态闭环跟随
                 theta_des = theta_base_raw
 
-            # 方案 1: 闭环绝对姿态伺服控制: w_target = Kp * (theta_des - current_theta_tracked)
-            # 手倾斜多少度，机械臂末端旋转多少度；手回平则臂回平，彻底免除寻找死区焦虑
-            e_ori = theta_des - current_theta_tracked[0]
-            Kp_ori = 3.5
-            w_target = np.clip(Kp_ori * e_ori, -0.80, 0.80) * ang_scale
+            # 方案 1: 前馈微分速度 + 闭环姿态伺服 (消除阶跃跳动，保证充沛平滑力矩)
+            # 1. 目标姿态一阶 EMA 平滑
+            smooth_theta_des[0] = 0.30 * theta_des + 0.70 * smooth_theta_des[0]
 
-            # 积分更新虚拟追踪姿态
-            current_theta_tracked[0] += w_target * dt
+            # 2. 前馈角速度 (微分)
+            w_ff = (smooth_theta_des[0] - prev_smooth_theta[0]) / max(0.01, dt)
+            prev_smooth_theta[0] = smooth_theta_des[0].copy()
 
-            # EMA 低通平滑
-            smooth_w_base[0] = 0.35 * w_target + 0.65 * smooth_w_base[0]
-            if np.linalg.norm(smooth_w_base[0]) < 0.015:
+            # 3. 闭环误差补偿 (P 环)
+            e_ori = smooth_theta_des[0] - current_theta_tracked[0]
+            w_fb = 3.0 * e_ori
+
+            # 4. 合成角速度与动力学限幅 (最高 1.5 rad/s ~ 85 deg/s，电机旋转平稳不抖动)
+            w_raw = (w_ff + w_fb) * ang_scale
+            w_max = 1.50  # rad/s
+            w_clamped = np.clip(w_raw, -w_max, w_max)
+
+            # 5. 积分更新跟踪状态
+            current_theta_tracked[0] += w_clamped * dt
+
+            # 6. EMA 低通平滑输出
+            smooth_w_base[0] = 0.40 * w_clamped + 0.60 * smooth_w_base[0]
+            if np.linalg.norm(smooth_w_base[0]) < 0.02:
                 smooth_w_base[0] = np.zeros(3)
             w_base = tuple(float(x) for x in smooth_w_base[0])
 
-            d_roll = float(np.degrees(theta_des[0]))
-            d_pitch = float(np.degrees(theta_des[1]))
+            d_pitch = float(np.degrees(theta_des[0]))
+            d_roll = float(np.degrees(theta_des[1]))
 
         info = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
                 "wrist_mm": tuple(float(v) for v in pts[0]),

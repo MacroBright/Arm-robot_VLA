@@ -506,19 +506,23 @@ class ZdtController:
 
     def ready(self, calib_offsets: Optional[list] = None,
               use_kb: bool = True,
-              calib_kb: Optional[list] = None) -> list[float]:
-        """安全运动至按摩准备姿态 (READY_POSE_DEG), 6 关节同步安全速度."""
-        return self._move_pose_safe(READY_POSE_DEG, READY_SPEED_RPM, "ready",
+              calib_kb: Optional[list] = None,
+              target_angles_deg: Optional[list] = None) -> list[float]:
+        """安全运动至按摩准备姿态 (默认 READY_POSE_DEG), 6 关节同步安全速度."""
+        target = target_angles_deg if target_angles_deg is not None else READY_POSE_DEG
+        return self._move_pose_safe(target, READY_SPEED_RPM, "ready",
                                     calib_offsets, use_kb, calib_kb)
 
     def home(self, calib_offsets: Optional[list] = None,
              use_kb: bool = True,
-             calib_kb: Optional[list] = None) -> list[float]:
-        """安全运动回上电初始姿态 (JOINT_INIT_ANGLE_DEG 全 0), 6 关节同步安全速度.
+             calib_kb: Optional[list] = None,
+             target_angles_deg: Optional[list] = None) -> list[float]:
+        """安全运动回上电初始姿态 (默认 JOINT_INIT_ANGLE_DEG 全 0), 6 关节同步安全速度.
 
         注意与 driver.home (0x9A 单圈回零) 不同: 本方法用 0xFD 相对运动回上电姿态.
         """
-        return self._move_pose_safe(JOINT_INIT_ANGLE_DEG, READY_SPEED_RPM, "home",
+        target = target_angles_deg if target_angles_deg is not None else JOINT_INIT_ANGLE_DEG
+        return self._move_pose_safe(target, READY_SPEED_RPM, "home",
                                     calib_offsets, use_kb, calib_kb)
 
     # ── 角度/脉冲换算 (输出轴角度 ↔ 0xFD 脉冲) ────────────

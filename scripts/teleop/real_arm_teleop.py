@@ -479,7 +479,10 @@ def main():
                                        max_ang_rad_s=teleop_cfg.motor.max_ang_rad_s,
                                        max_joint_vel_deg_s=teleop_cfg.motor.max_joint_vel_deg_s,
                                        max_joint_acc_deg_s2=teleop_cfg.motor.max_joint_acc_deg_s2))
-        adapter = RealArmAdapter(ctrl, max_dq_deg=teleop_cfg.motor.max_dq_deg, joint_factors=joint_factors)
+        adapter = RealArmAdapter(ctrl, max_dq_deg=teleop_cfg.motor.max_dq_deg,
+                                 joint_factors=joint_factors,
+                                 ready_pose=teleop_cfg.pose.ready_pose_deg,
+                                 home_pose=teleop_cfg.pose.home_pose_deg)
 
     watchdog = VisionWatchdog()
     recorder = EpisodeRecorder(args.out)

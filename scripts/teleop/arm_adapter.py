@@ -127,10 +127,12 @@ class RealArmAdapter:
     arm(gravity_confirmed) 由调用方显式调用 (重力关节 J2/J3 需确认).
     """
 
-    def __init__(self, ctrl, **cart_kwargs):
+    def __init__(self, ctrl, ready_pose: Optional[list] = None, home_pose: Optional[list] = None, **cart_kwargs):
         from lerobot_robot_massage.zdt.cartesian import CartesianController
         self._ctrl = ctrl
         self._cart = CartesianController(ctrl, **cart_kwargs)
+        self.ready_pose = ready_pose
+        self.home_pose = home_pose
 
     def connect(self) -> None:
         self._ctrl.connect()                       # SAFE_IDLE, 不使能扭矩
@@ -189,14 +191,14 @@ class RealArmAdapter:
         self._cart.step_pose(p_des, R_des, **kw)
 
     def ready(self) -> None:
-        """安全运动至按摩准备姿态 (READY_POSE_DEG=[0,60,50,0,120,0]), 100 RPM 同步."""
+        """安全运动至按摩准备姿态 (配置 target_pose 或 READY_POSE_DEG), 100 RPM 同步."""
         self.re_arm(gravity_confirmed=True)
-        self._cart.ready()
+        self._cart.ready(target_angles_deg=self.ready_pose)
 
     def home(self) -> None:
-        """安全运动回上电初始姿态 (JOINT_INIT_ANGLE_DEG=[0,0,0,0,0,0]), 100 RPM 同步."""
+        """安全运动回上电初始姿态 (配置 target_pose 或 JOINT_INIT_ANGLE_DEG), 100 RPM 同步."""
         self.re_arm(gravity_confirmed=True)
-        self._cart.home()
+        self._cart.home(target_angles_deg=self.home_pose)
 
     def reset(self) -> None:
         self.ready()

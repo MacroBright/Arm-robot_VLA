@@ -333,13 +333,13 @@ class CartesianController:
 
     # ── 安全 / 工具 ───────────────────────────────────────
 
-    def ready(self) -> list[float]:
+    def ready(self, target_angles_deg: Optional[list] = None) -> list[float]:
         """回按摩准备姿态 (复用 controller.ready)."""
-        return self.ctrl.ready(use_kb=True)
+        return self.ctrl.ready(use_kb=True, target_angles_deg=target_angles_deg)
 
-    def home(self) -> list[float]:
+    def home(self, target_angles_deg: Optional[list] = None) -> list[float]:
         """回上电初始姿态全 0 (复用 controller.home, 安全速度同步)."""
-        return self.ctrl.home(use_kb=True)
+        return self.ctrl.home(use_kb=True, target_angles_deg=target_angles_deg)
 
     def e_stop(self) -> None:
         """广播急停."""

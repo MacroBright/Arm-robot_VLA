@@ -53,7 +53,8 @@ def test_teleop_config_load_yaml():
         assert cfg.joint_factor.j1_base_yaw == 2.0
         assert cfg.motor.speed_rpm == 2000.0
         assert cfg.gear.gear_2_mid.lin_scale == 0.080
-        assert cfg.gear.gear_3_high.lin_scale == 1.200
+        assert cfg.gear.gear_3_high.lin_scale == 1.000
+        assert cfg.pose.ready_pose_deg == [0.0, 65.0, 50.0, 0.0, 130.0, 0.0]
 
 
 def test_teleop_config_save_and_load_temp():

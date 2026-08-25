@@ -192,15 +192,20 @@ def test_recorder_gets_records():
 
 
 def test_massage_modes_and_orientation_constants():
-    from real_arm_teleop import MODE_FULL, MODE_KNEAD, MODE_MAP, MODE_NAMES, MODE_ROLL
+    from real_arm_teleop import (
+        MODE_FULL, MODE_KNEAD, MODE_MAP, MODE_NAMES, MODE_PITCH, MODE_ROLL,
+    )
     assert MODE_KNEAD == 1
     assert MODE_ROLL == 2
-    assert MODE_FULL == 3
+    assert MODE_PITCH == 3
+    assert MODE_FULL == 4
     assert MODE_MAP["knead"] == MODE_KNEAD
     assert MODE_MAP["roll"] == MODE_ROLL
+    assert MODE_MAP["pitch"] == MODE_PITCH
     assert MODE_MAP["full"] == MODE_FULL
     assert "垂直点按揉捏" in MODE_NAMES[MODE_KNEAD]
     assert "滚法" in MODE_NAMES[MODE_ROLL]
+    assert "俯仰调节" in MODE_NAMES[MODE_PITCH]
     assert "全 6-DOF" in MODE_NAMES[MODE_FULL]
 
 

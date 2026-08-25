@@ -194,14 +194,16 @@ class RealArmTeleop:
 
 MODE_KNEAD = 1
 MODE_ROLL = 2
-MODE_FULL = 3
+MODE_PITCH = 3
+MODE_FULL = 4
 
 MODE_NAMES = {
-    MODE_KNEAD: "1. 垂直点按揉捏 (姿态锁定)",
-    MODE_ROLL:  "2. 滚法推法 (单轴滚转)",
-    MODE_FULL:  "3. 全 6-DOF (全姿态跟随)",
+    MODE_KNEAD: "1. 垂直点按揉捏 (姿态全锁定)",
+    MODE_ROLL:  "2. 滚法推法 (单轴Roll / 锁Pitch)",
+    MODE_PITCH: "3. 俯仰调节 (单轴Pitch / 锁Roll)",
+    MODE_FULL:  "4. 全 6-DOF (全姿态跟随)",
 }
-MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "full": MODE_FULL}
+MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "pitch": MODE_PITCH, "full": MODE_FULL}
 
 
 def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
@@ -264,14 +266,21 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         txt = f" {tag}[EMERGENCY STOP] Robot Locked! Press SPACE to Re-arm | Q: Quit"
         cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     elif clutch_active:
-        bar_color = (0, 130, 40) if mode == MODE_KNEAD else ((140, 90, 0) if mode == MODE_ROLL else (100, 0, 130))
+        if mode == MODE_KNEAD:
+            bar_color = (0, 130, 40)
+        elif mode == MODE_ROLL:
+            bar_color = (140, 90, 0)
+        elif mode == MODE_PITCH:
+            bar_color = (160, 50, 0)
+        else:
+            bar_color = (100, 0, 130)
         cv2.rectangle(bgr, (0, 0), (w, 42), bar_color, -1)
         txt = f" {tag}[遥操活跃] {mode_str} | [M] 切模式 | [C] 归零 | [SPACE] 暂停"
-        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2)
     else:
         cv2.rectangle(bgr, (0, 0), (w, 42), (0, 140, 220), -1)
         txt = f" {tag}[CLUTCH PAUSED] {mode_str} | Press SPACE to Engage Teleop"
-        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
 
     # 动作与状态机信息
     status_color = (0, 255, 0) if action == "OK" else ((0, 0, 255) if action == "ESTOP" else (0, 200, 255))
@@ -295,7 +304,16 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         is_rot = np.linalg.norm(ang) > 0.02
         ang_color = (0, 255, 255) if is_rot else (200, 200, 200)
         tags = [t for t in [roll_dir, pitch_dir] if t]
-        rot_tag = f" [{' '.join(tags)}]" if tags else (" [锁定中]" if mode == MODE_KNEAD else "")
+        if tags:
+            rot_tag = f" [{' '.join(tags)}]"
+        elif mode == MODE_KNEAD:
+            rot_tag = " [姿态全锁定]"
+        elif mode == MODE_ROLL:
+            rot_tag = " [锁Pitch/仅Roll]"
+        elif mode == MODE_PITCH:
+            rot_tag = " [锁Roll/仅Pitch]"
+        else:
+            rot_tag = ""
         ang_txt = f"w_ang: [{ang[0]:+5.2f}, {ang[1]:+5.2f}, {ang[2]:+5.2f}] rad/s{rot_tag}"
         cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, ang_color, 2)
     else:
@@ -336,8 +354,8 @@ def main():
     ap.add_argument("-y", "--gravity-confirm", action="store_true",
                     help="确认重力关节 J2/J3 二次确认 (真机驱动必须)")
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
-    ap.add_argument("--mode", choices=["knead", "roll", "full"], default="knead",
-                    help="推拿遥操姿态模式: knead(点按揉捏姿态锁定), roll(滚法单轴), full(全6DOF自由)")
+    ap.add_argument("--mode", choices=["knead", "roll", "pitch", "full"], default="knead",
+                    help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
     ap.add_argument("--speed-scale", type=float, default=1.0,
                     help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 1.0)")
     ap.add_argument("--ang-scale", type=float, default=None,
@@ -555,13 +573,16 @@ def main():
             # 方案 2: 推拿模态解耦约束 (Tuina Modes)
             m = current_mode[0]
             if m == MODE_KNEAD:
-                # 模式 1: 垂直点按揉捏 (姿态完全锁定为零，彻底免疫五指揉捏时的一切干扰)
+                # 模式 1: 垂直点按揉捏 (姿态全锁定，彻底免疫五指揉捏时的一切干扰)
                 theta_des = np.zeros(3)
             elif m == MODE_ROLL:
-                # 模式 2: 滚法一指禅 (仅保留沿机械臂前进轴 X 的滚转 Roll，Pitch 锁定)
+                # 模式 2: 滚法推法 (仅保留沿机械臂前进轴 X 的滚转 Roll，Pitch 锁定)
                 theta_des = np.array([theta_base_raw[0], 0.0, 0.0])
+            elif m == MODE_PITCH:
+                # 模式 3: 俯仰调节 (仅保留沿机械臂横向轴 Y 的俯仰 Pitch，Roll 锁定)
+                theta_des = np.array([0.0, theta_base_raw[1], 0.0])
             else:
-                # 模式 3: 全 6-DOF 自由姿态闭环跟随
+                # 模式 4: 全 6-DOF 自由姿态闭环跟随
                 theta_des = theta_base_raw
 
             # 方案 1: 闭环绝对姿态伺服控制: w_target = Kp * (theta_des - current_theta_tracked)
@@ -649,7 +670,7 @@ def main():
 
             k = cv2.waitKey(1) & 0xFF
             if k in (ord("m"), ord("M")):
-                current_mode[0] = (current_mode[0] % 3) + 1
+                current_mode[0] = (current_mode[0] % 4) + 1
                 anchor_r_hand[0] = None
                 current_theta_tracked[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[current_mode[0]]}")
@@ -664,6 +685,11 @@ def main():
                 current_theta_tracked[0] = np.zeros(3)
                 print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_ROLL]}")
             elif k == ord("3"):
+                current_mode[0] = MODE_PITCH
+                anchor_r_hand[0] = None
+                current_theta_tracked[0] = np.zeros(3)
+                print(f"[模式切换] 当前推拿姿态模式: {MODE_NAMES[MODE_PITCH]}")
+            elif k == ord("4"):
                 current_mode[0] = MODE_FULL
                 anchor_r_hand[0] = None
                 current_theta_tracked[0] = np.zeros(3)

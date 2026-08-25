@@ -284,16 +284,20 @@ def main():
                             # 模态 1: 垂直点按揉捏 (完全锁定)
                             d_roll, d_pitch = 0.0, 0.0
                         elif sandbox_mode[0] == 2:
-                            # 模态 2: 滚法一指禅 (仅开放 Roll)
+                            # 模态 2: 滚法推法 (仅开放 Roll, 锁 Pitch)
                             d_roll = d_roll_raw if abs(d_roll_raw) > 5.0 else 0.0
                             d_pitch = 0.0
+                        elif sandbox_mode[0] == 3:
+                            # 模态 3: 俯仰调节 (仅开放 Pitch, 锁 Roll)
+                            d_roll = 0.0
+                            d_pitch = d_pitch_raw if abs(d_pitch_raw) > 5.0 else 0.0
                         else:
-                            # 模态 3: 全 6-DOF
+                            # 模态 4: 全 6-DOF
                             d_roll = d_roll_raw if abs(d_roll_raw) > 5.0 else 0.0
                             d_pitch = d_pitch_raw if abs(d_pitch_raw) > 5.0 else 0.0
 
                 # 中文动作映射实时解析
-                mode_names = {1: "1.点按揉捏(锁定)", 2: "2.滚法(单轴Roll)", 3: "3.全6DOF(全姿态)"}
+                mode_names = {1: "1.点按揉捏(锁定)", 2: "2.滚法(单轴Roll)", 3: "3.俯仰调节(单轴Pitch)", 4: "4.全6DOF(全姿态)"}
                 x_tag = "【+X 前进延伸】" if v_b[0] > 10 else ("【-X 后退收缩】" if v_b[0] < -10 else "静止")
                 y_tag = "【+Y 向左平移】" if v_b[1] > 10 else ("【-Y 向右平移】" if v_b[1] < -10 else "静止")
                 z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
@@ -303,6 +307,8 @@ def main():
                     roll_tag, pitch_tag = "【姿态锁定】", "【姿态锁定】"
                 elif sandbox_mode[0] == 2:
                     pitch_tag = "【姿态锁定】"
+                elif sandbox_mode[0] == 3:
+                    roll_tag = "【姿态锁定】"
 
                 # 左侧数据面板
                 cv2.rectangle(bgr, (15, 95), (460, 275), (20, 20, 28), -1)
@@ -340,7 +346,7 @@ def main():
 
             if in_sandbox:
                 if k in (ord("m"), ord("M")):
-                    sandbox_mode[0] = (sandbox_mode[0] % 3) + 1
+                    sandbox_mode[0] = (sandbox_mode[0] % 4) + 1
                     anchor_r_hand[0] = None
                     print(f"[沙盒] 切换推拿姿态模式: {mode_names[sandbox_mode[0]]}")
                 elif k == ord("1"):
@@ -351,6 +357,9 @@ def main():
                     anchor_r_hand[0] = None
                 elif k == ord("3"):
                     sandbox_mode[0] = 3
+                    anchor_r_hand[0] = None
+                elif k == ord("4"):
+                    sandbox_mode[0] = 4
                     anchor_r_hand[0] = None
                 elif k in (ord("c"), ord("C")):
                     anchor_r_hand[0] = None

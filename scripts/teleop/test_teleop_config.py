@@ -51,7 +51,9 @@ def test_teleop_config_load_yaml():
         assert cfg.gear.default_gear == 2
         assert cfg.joint_factor.j5_wrist_pitch == 1.0
         assert cfg.joint_factor.j1_base_yaw == 2.0
-        assert cfg.motor.speed_rpm == 2800.0
+        assert cfg.motor.speed_rpm == 2000.0
+        assert cfg.gear.gear_2_mid.lin_scale == 0.080
+        assert cfg.gear.gear_3_high.lin_scale == 1.200
 
 
 def test_teleop_config_save_and_load_temp():
@@ -66,3 +68,27 @@ def test_teleop_config_save_and_load_temp():
         loaded = TeleopConfig.load(tmp_yaml)
         assert loaded.gear.default_gear == 3
         assert loaded.motor.speed_rpm == 2500.0
+
+
+def test_teleop_config_validation_safety():
+    cfg = TeleopConfig()
+    # 正常无异常
+    assert isinstance(cfg.validate(), list)
+
+    # 异常测试 1: 电机超速
+    cfg.motor.speed_rpm = 4000.0
+    with pytest.raises(ValueError, match="超出硬件极限"):
+        cfg.validate()
+    cfg.motor.speed_rpm = 2000.0
+
+    # 异常测试 2: 负速度比例
+    cfg.gear.gear_1_low.lin_scale = -0.5
+    with pytest.raises(ValueError, match="超出安全范围"):
+        cfg.validate()
+    cfg.gear.gear_1_low.lin_scale = 0.03
+
+    # 异常测试 3: 关节倍率非法
+    cfg.joint_factor.j1_base_yaw = 10.0
+    with pytest.raises(ValueError, match="超出安全范围"):
+        cfg.validate()
+

@@ -315,41 +315,107 @@ class TeleopConfig:
 
         return cfg
 
+    def validate(self) -> List[str]:
+        """
+        全面验证配置参数的物理合理性与安全边界 (Pre-Flight Safety Validator).
+
+        - 若存在严重安全隐患 (如负速度、转速超限、关节倍率异常)，抛出 ValueError 中断启动；
+        - 若存在调优建议/提示项，返回警告信息列表 (用于启动时在控制台黄色高亮提示).
+        """
+        warnings: List[str] = []
+
+        # 1. 档位系统安全校验
+        for g_name, g in [("1.低速档", self.gear.gear_1_low),
+                          ("2.中速档", self.gear.gear_2_mid),
+                          ("3.高速档", self.gear.gear_3_high)]:
+            if not (0.001 <= g.lin_scale <= 3.0):
+                raise ValueError(f"[{g_name}] 平移比例 lin_scale={g.lin_scale} 超出安全范围 [0.001, 3.0]")
+            if not (0.01 <= g.max_omega <= 10.0):
+                raise ValueError(f"[{g_name}] 姿态角速度 max_omega={g.max_omega} rad/s 超出安全范围 [0.01, 10.0]")
+            if not (1.0 <= g.gain_xyz <= 5.0):
+                raise ValueError(f"[{g_name}] 动态增益 gain_xyz={g.gain_xyz} 超出安全范围 [1.0, 5.0]")
+            if g.lin_scale > 1.0:
+                warnings.append(f"[{g_name}] 平移比例 lin_scale={g.lin_scale:.2f} (>100%) 处于超高速档，请在空旷区域谨慎操作")
+
+        if not (self.gear.gear_1_low.lin_scale <= self.gear.gear_2_mid.lin_scale <= self.gear.gear_3_high.lin_scale):
+            warnings.append("档位平移速度非单调递增 (建议 低速档 <= 中速档 <= 高速档)")
+
+        # 2. 6 关节独立倍率安全校验
+        factors = self.joint_factor.as_list()
+        for idx, f in enumerate(factors, start=1):
+            if not (0.1 <= f <= 5.0):
+                raise ValueError(f"[关节 J{idx}] 速度倍率 factor={f} 超出安全范围 [0.1, 5.0]")
+
+        # 3. 电机与控制器安全极限校验
+        if not (50.0 <= self.motor.speed_rpm <= 3000.0):
+            raise ValueError(f"[电机限速] speed_rpm={self.motor.speed_rpm} RPM 超出硬件极限 [50, 3000]")
+        if self.motor.position_acc not in range(256):
+            raise ValueError(f"[电机加速度] position_acc={self.motor.position_acc} 必须在 0~255 之间")
+        if not (10.0 <= self.motor.max_vel_mm_s <= 1000.0):
+            raise ValueError(f"[笛卡尔线速度] max_vel_mm_s={self.motor.max_vel_mm_s} mm/s 超出安全范围 [10, 1000]")
+        if not (0.5 <= self.motor.max_ang_rad_s <= 15.0):
+            raise ValueError(f"[笛卡尔角速度] max_ang_rad_s={self.motor.max_ang_rad_s} rad/s 超出安全范围 [0.5, 15]")
+        if not (1.0 <= self.motor.max_dq_deg <= 45.0):
+            raise ValueError(f"[单步角度限制] max_dq_deg={self.motor.max_dq_deg} deg/step 超出安全范围 [1, 45]")
+
+        # 4. 预设姿态维度与范围校验
+        if len(self.pose.ready_pose_deg) != 6:
+            raise ValueError(f"[预设姿态] READY 姿态必须包含 6 关节角度，当前为 {len(self.pose.ready_pose_deg)} 项")
+        if len(self.pose.home_pose_deg) != 6:
+            raise ValueError(f"[预设姿态] HOME 姿态必须包含 6 关节角度，当前为 {len(self.pose.home_pose_deg)} 项")
+
+        # 5. 视觉滤波参数校验
+        if not (0.1 <= self.vision.pts_min_cutoff <= 10.0):
+            raise ValueError(f"[视觉滤波] pts_min_cutoff={self.vision.pts_min_cutoff} Hz 超出有效范围 [0.1, 10.0]")
+        if not (0.001 <= self.vision.pts_beta <= 1.0):
+            raise ValueError(f"[视觉滤波] pts_beta={self.vision.pts_beta} 超出有效范围 [0.001, 1.0]")
+        if not (0.5 <= self.vision.deadband_angle_deg <= 20.0):
+            raise ValueError(f"[摇杆死区] deadband_angle_deg={self.vision.deadband_angle_deg}° 超出有效范围 [0.5, 20.0]")
+
+        return warnings
+
     @classmethod
-    def load(cls, file_path: str | Path) -> "TeleopConfig":
+    def load(cls, file_path: str | Path, validate: bool = True) -> "TeleopConfig":
         """从 .yaml, .json 或 .py 配置文件加载配置 (如果文件不存在则返回默认配置)."""
         path = Path(file_path)
-        if not path.exists():
-            return cls()
-
-        suffix = path.suffix.lower()
-        if suffix in (".yaml", ".yml"):
-            try:
-                import yaml
-                with open(path, "r", encoding="utf-8") as f:
-                    content = yaml.safe_load(f)
-                    if isinstance(content, dict):
-                        return cls.from_dict(content)
-            except Exception:
-                # 纯 Python 标准库 YAML 轻量解析器 (无需 PyYAML 第三方依赖)
+        cfg: Optional[TeleopConfig] = None
+        if path.exists():
+            suffix = path.suffix.lower()
+            if suffix in (".yaml", ".yml"):
                 try:
+                    import yaml
                     with open(path, "r", encoding="utf-8") as f:
-                        content = _simple_yaml_parse(f.read())
-                        if isinstance(content, dict) and content:
-                            return cls.from_dict(content)
-                except Exception as err:
-                    print(f"[配置警告] 加载 YAML 失败 ({err})，使用默认配置")
-        elif suffix == ".json":
-            try:
-                import json
-                with open(path, "r", encoding="utf-8") as f:
-                    content = json.load(f)
-                    if isinstance(content, dict):
-                        return cls.from_dict(content)
-            except Exception as e:
-                print(f"[配置警告] 加载 JSON 失败 ({e})，使用默认配置")
+                        content = yaml.safe_load(f)
+                        if isinstance(content, dict):
+                            cfg = cls.from_dict(content)
+                except Exception:
+                    # 纯 Python 标准库 YAML 轻量解析器 (无需 PyYAML 第三方依赖)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            content = _simple_yaml_parse(f.read())
+                            if isinstance(content, dict) and content:
+                                cfg = cls.from_dict(content)
+                    except Exception as err:
+                        print(f"[配置警告] 加载 YAML 失败 ({err})，使用默认配置")
+            elif suffix == ".json":
+                try:
+                    import json
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = json.load(f)
+                        if isinstance(content, dict):
+                            cfg = cls.from_dict(content)
+                except Exception as e:
+                    print(f"[配置警告] 加载 JSON 失败 ({e})，使用默认配置")
 
-        return cls()
+        if cfg is None:
+            cfg = cls()
+
+        if validate:
+            warnings = cfg.validate()
+            for w in warnings:
+                print(f"[配置安全提示] \033[93m{w}\033[0m")
+
+        return cfg
 
     def save_yaml(self, file_path: str | Path) -> None:
         """保存为 YAML 格式配置文件 (纯标准库支持)."""

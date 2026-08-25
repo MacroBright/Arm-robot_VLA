@@ -129,10 +129,10 @@ class ZdtConfig:
     calib: list = field(default_factory=lambda: list(CALIB))
 
     # ── 遥操/笛卡尔 (2026-08-23, spec §4) ──
-    max_vel_mm_s: float = 150.0
-    max_ang_rad_s: float = 3.5
-    max_joint_vel_deg_s: float = 180.0
-    max_joint_acc_deg_s2: float = 500.0
+    max_vel_mm_s: float = 250.0
+    max_ang_rad_s: float = 4.5
+    max_joint_vel_deg_s: float = 240.0
+    max_joint_acc_deg_s2: float = 800.0
     joint_limit_margin_deg: float = 2.0
     kp_pos: float = 2.0
     kr_ori: float = 2.0

@@ -306,7 +306,7 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         cv2.putText(bgr, spd_txt, (15, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
 
         pitch_dir = "低头" if ang[0] < -0.05 else ("抬头" if ang[0] > 0.05 else "")
-        roll_dir = "右滚" if ang[1] > 0.05 else ("左滚" if ang[1] < -0.05 else "")
+        roll_dir = "左滚" if ang[1] > 0.05 else ("右滚" if ang[1] < -0.05 else "")
         is_rot = np.linalg.norm(ang) > 0.02
         ang_color = (0, 255, 255) if is_rot else (200, 200, 200)
         tags = [t for t in [pitch_dir, roll_dir] if t]
@@ -329,12 +329,14 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         ang_txt = f"w_ang: [ +0.00,  +0.00,  +0.00] rad/s [{pause_hint}]"
         cv2.putText(bgr, ang_txt, (15, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 180, 255), 1)
 
-    # 手部目标偏角显示 (Absolute Desired Angles)
+    # 手部目标偏角显示 (Joystick Tilt Angles)
     if hand_info and "d_pitch_deg" in hand_info and "d_roll_deg" in hand_info:
         tilt_status = "" if clutch_active else " (PAUSED)"
-        pose_txt = (f"Target Pose: Roll: {hand_info['d_roll_deg']:+5.1f}° | "
-                    f"Pitch: {hand_info['d_pitch_deg']:+5.1f}°{tilt_status}")
-        cv2.putText(bgr, pose_txt, (15, 146), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 230, 255), 1)
+        hand_roll_tag = "左倾" if hand_info['d_roll_deg'] > 4.0 else ("右倾" if hand_info['d_roll_deg'] < -4.0 else "平")
+        hand_pitch_tag = "下压" if hand_info['d_pitch_deg'] < -4.0 else ("上抬" if hand_info['d_pitch_deg'] > 4.0 else "平")
+        pose_txt = (f"Tilt: Roll: {hand_info['d_roll_deg']:+5.1f}°({hand_roll_tag}) | "
+                    f"Pitch: {hand_info['d_pitch_deg']:+5.1f}°({hand_pitch_tag}){tilt_status}")
+        cv2.putText(bgr, pose_txt, (15, 146), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (180, 230, 255), 1)
 
     # 右下角绘制 6 关节 all status 实时监测表
     if joint_state is not None:
@@ -590,9 +592,9 @@ def main():
             # 将人手旋转矢量转换至机械臂基座系
             theta_base_raw = r_cam_to_base @ theta_cam
             # 提取人手当前实测俯仰与滚转倾角 (度)
-            # Pitch (绕 X_base): 手腕下压为负，手腕上抬为正
-            hand_pitch_deg = -float(np.degrees(theta_base_raw[0]))
-            # Roll (绕 Y_base): 顺时针右翻为正，逆时针左翻为负
+            # Pitch (绕 X_base): 手腕下压为负(低头)，手腕上抬为正(抬头)
+            hand_pitch_deg = float(np.degrees(theta_base_raw[0]))
+            # Roll (绕 Y_base): 顺时针右翻为负，逆时针左翻为正
             hand_roll_deg = float(np.degrees(theta_base_raw[1]))
 
             # 方案 2: 推拿模态解耦约束 (Tuina Modes) 下的虚拟摇杆速率生成

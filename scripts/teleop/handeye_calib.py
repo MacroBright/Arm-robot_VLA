@@ -295,7 +295,7 @@ def main():
                             r = min(1.0, (abs_ang - deadband) / max(1.0, max_ang - deadband))
                             return float(np.sign(angle_deg) * (r ** 1.4) * max_w)
 
-                        hand_pitch = -float(np.degrees(theta_b[0]))
+                        hand_pitch = float(np.degrees(theta_b[0]))
                         hand_roll = float(np.degrees(theta_b[1]))
                         w_pitch_raw = _joy(hand_pitch, deadband=5.0, max_ang=22.0, max_w=1.20)
                         w_roll_raw = _joy(hand_roll, deadband=5.0, max_ang=28.0, max_w=1.20)
@@ -319,7 +319,7 @@ def main():
                 x_tag = "【+X 向左平移】" if v_b[0] > 10 else ("【-X 向右平移】" if v_b[0] < -10 else "静止")
                 y_tag = "【-Y 前进延伸】" if v_b[1] < -10 else ("【+Y 后退收缩】" if v_b[1] > 10 else "静止")
                 z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
-                roll_tag = "【向右持续滚转】" if w_roll > 0.05 else ("【向左持续滚转】" if w_roll < -0.05 else "回平保持 (死区内)")
+                roll_tag = "【向左持续滚转】" if w_roll > 0.05 else ("【向右持续滚转】" if w_roll < -0.05 else "回平保持 (死区内)")
                 pitch_tag = "【向下持续低头】" if w_pitch < -0.05 else ("【向上持续抬头】" if w_pitch > 0.05 else "回平保持 (死区内)")
                 if sandbox_mode[0] == 1:
                     roll_tag, pitch_tag = "【姿态锁定】", "【姿态锁定】"

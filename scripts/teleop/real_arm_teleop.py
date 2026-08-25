@@ -212,10 +212,10 @@ MODE_NAMES = {
 MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "pitch": MODE_PITCH, "full": MODE_FULL}
 
 # 灵敏度档位系统 (Sensitivity Speed Gears):
-# 灵敏度档位系统 (Sensitivity Speed Gears):
-# 档位 1: 低速档 (Low Gear / 15% 平移速度, 姿态 1.5 rad/s, 穴位对准/精细按摩/安全微调)
-# 档位 2: 中速档 (Mid Gear / 25% 平移速度, 姿态 3.5 rad/s, 标准推拿揉捏/平稳舒适, 默认)
-# 档位 3: 高速档 (High Gear / 35% 平移速度, 姿态 5.0 rad/s, 灵敏姿态调整/快速移位)
+# 灵敏度档位系统 (Sensitivity Speed Gears - 归一化温和操控档位):
+# 档位 1: 低速档 (Low Gear / 平移 3.0%, 姿态 0.30 rad/s, 穴位超微调/精细按摩/安全慢速)
+# 档位 2: 中速档 (Mid Gear / 平移 5.0%, 姿态 0.70 rad/s, 标准推拿揉捏/平顺跟手, 默认)
+# 档位 3: 高速档 (High Gear / 平移 7.0%, 姿态 1.00 rad/s, 适度换位/灵敏姿态调整)
 GEAR_FINE = 1
 GEAR_STANDARD = 2
 GEAR_FAST = 3
@@ -225,25 +225,25 @@ GEAR_CONFIGS = {
         "name": "1.低速档",
         "badge": "LOW",
         "color": (0, 230, 100),       # 浅绿色
-        "lin_scale": 0.15,
+        "lin_scale": 0.030,
         "gain_xyz": 1.0,
-        "max_omega": 1.5,
+        "max_omega": 0.30,
     },
     GEAR_STANDARD: {
         "name": "2.中速档",
         "badge": "MID",
         "color": (0, 220, 255),       # 明黄色
-        "lin_scale": 0.25,
-        "gain_xyz": 1.2,
-        "max_omega": 3.5,
+        "lin_scale": 0.050,
+        "gain_xyz": 1.0,
+        "max_omega": 0.70,
     },
     GEAR_FAST: {
         "name": "3.高速档",
         "badge": "HIGH",
         "color": (0, 120, 255),       # 亮橙色
-        "lin_scale": 0.35,
-        "gain_xyz": 1.5,
-        "max_omega": 5.0,
+        "lin_scale": 0.070,
+        "gain_xyz": 1.1,
+        "max_omega": 1.00,
     },
 }
 

@@ -251,19 +251,26 @@ def main():
                     if 0.001 < dt < 0.5:
                         v_cam = (wrist_cam - last_wrist[0]) / dt
                         v_b_raw = solved_R @ v_cam
-                        # 1. 14 mm/s 单轴独立死区门限 (彻底切除微幅生理手震与视觉散斑)
+                        # 1. 10 mm/s 单轴灵敏死区门限 (滤除生理微颤，提升起步灵敏度)
                         v_b_clamped = np.zeros(3)
                         for i in range(3):
-                            if abs(v_b_raw[i]) > 14.0:
+                            if abs(v_b_raw[i]) > 10.0:
                                 v_b_clamped[i] = v_b_raw[i]
-                        # 2. 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 30% 视为微震耦合并清零
+                        # 2. 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 25% 视为微震耦合并清零
                         max_axis_val = float(np.max(np.abs(v_b_clamped)))
-                        if max_axis_val > 22.0:
+                        if max_axis_val > 18.0:
                             for i in range(3):
-                                if abs(v_b_clamped[i]) < 0.30 * max_axis_val:
+                                if abs(v_b_clamped[i]) < 0.25 * max_axis_val:
                                     v_b_clamped[i] = 0.0
-                        smooth_v_base = 0.25 * v_b_clamped + 0.75 * smooth_v_base
-                        v_b = smooth_v_base
+                        raw_speed = float(np.linalg.norm(v_b_clamped))
+                        alpha = 0.30 + 0.25 * min(1.0, max(0.0, (raw_speed - 12.0) / 50.0))
+                        smooth_v_base = alpha * v_b_clamped + (1.0 - alpha) * smooth_v_base
+                        spd_filt = float(np.linalg.norm(smooth_v_base))
+                        if spd_filt > 10.0:
+                            spd_r = min(1.0, (spd_filt - 10.0) / 60.0)
+                            v_b = smooth_v_base * (1.0 + 1.2 * (spd_r ** 1.3))
+                        else:
+                            v_b = smooth_v_base
 
                 last_wrist[0] = wrist_cam
                 last_t[0] = now

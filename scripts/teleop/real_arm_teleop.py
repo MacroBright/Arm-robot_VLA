@@ -364,8 +364,10 @@ def main():
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
     ap.add_argument("--mode", choices=["knead", "roll", "pitch", "full"], default="knead",
                     help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
-    ap.add_argument("--speed-scale", type=float, default=0.50,
-                    help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 0.50 对应 50%% 速度)")
+    ap.add_argument("--speed-scale", type=float, default=1.0,
+                    help="全局平移线速度缩放比例 (0.01 ~ 1.5, 默认 1.0)")
+    ap.add_argument("--gain-xyz", type=float, default=2.2,
+                    help="XYZ 平移扫掠动态加速度增益 (1.0 ~ 3.5, 默认 2.2, 快速挥手大范围跨越无需多次踩离合)")
     ap.add_argument("--ang-scale", type=float, default=1.0,
                     help="全局旋转角速度独立缩放比例 (0.1 ~ 1.5, 默认 1.0 高响应平滑)")
     ap.add_argument("--max-omega", type=float, default=3.0,
@@ -404,7 +406,7 @@ def main():
     else:
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
         from lerobot_robot_massage.zdt.controller import ZdtController  # noqa: E402
-        ctrl = ZdtController(ZdtConfig(channel=args.iface, max_vel_mm_s=80.0, max_ang_rad_s=3.5,
+        ctrl = ZdtController(ZdtConfig(channel=args.iface, max_vel_mm_s=150.0, max_ang_rad_s=3.5,
                                        max_joint_vel_deg_s=180.0, max_joint_acc_deg_s2=500.0))
         adapter = RealArmAdapter(ctrl)
 
@@ -429,7 +431,8 @@ def main():
     anchor_r_hand = [None]
 
     # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale / 摇杆参数
-    lin_scale = max(0.01, min(1.0, float(args.speed_scale)))
+    lin_scale = max(0.01, min(2.0, float(args.speed_scale)))
+    gain_xyz = max(1.0, min(4.0, float(getattr(args, "gain_xyz", 2.2))))
     ang_scale = max(0.01, min(1.5, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
     max_omega = max(0.2, min(5.0, float(getattr(args, "max_omega", 3.0))))
     deadband_angle = max(1.0, min(15.0, float(getattr(args, "deadband_angle", 5.0))))
@@ -537,7 +540,7 @@ def main():
         v_base = (0.0, 0.0, 0.0)
         w_base = (0.0, 0.0, 0.0)
 
-        # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 14mm/s 独立死区 + 跨轴正交抑制 + 0.25/0.75 EMA低通滤波 (与沙盒100%对齐)
+        # 1. 笛卡尔线速度 (平移): 帧间物理差分 + 10mm/s 灵敏死区 + 跨轴正交抑制
         v_target = np.zeros(3)
         dt = 0.05
         if last_wrist[0] is not None and last_t[0] is not None:
@@ -546,25 +549,38 @@ def main():
                 dt = measured_dt
                 v_cam = (wrist_cam - last_wrist[0]) / dt
                 v_b_raw = r_cam_to_base @ v_cam
-                # 14 mm/s 单轴独立死区过滤 (彻底切除微幅生理手震与视觉散斑)
+                # 10 mm/s 单轴灵敏死区过滤 (滤除生理微颤，提升起步灵敏度)
                 v_b_clamped = np.zeros(3)
                 for i in range(3):
-                    if abs(v_b_raw[i]) > 14.0:
+                    if abs(v_b_raw[i]) > 10.0:
                         v_b_clamped[i] = v_b_raw[i]
-                # 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 30% 视为微震耦合并清零
+                # 跨轴正交抑制 (Cross-Axis Rejection): 主轴明显移动时，次轴低于 25% 视为微震耦合并清零
                 max_axis_val = float(np.max(np.abs(v_b_clamped)))
-                if max_axis_val > 22.0:
+                if max_axis_val > 18.0:
                     for i in range(3):
-                        if abs(v_b_clamped[i]) < 0.30 * max_axis_val:
+                        if abs(v_b_clamped[i]) < 0.25 * max_axis_val:
                             v_b_clamped[i] = 0.0
                 v_target = v_b_clamped
 
-        # EMA 低通滤波 (α=0.25)，与沙盒测试 100% 保持一致，平稳响应消除采样离散抖动
-        smooth_v_base[0] = 0.25 * v_target + 0.75 * smooth_v_base[0]
+        # 自适应动态滤波 (Adaptive EMA): 慢速微调稳定 (α=0.30)，快速扫掠零延迟 (α 动态提升至 0.55 超跟手)
+        raw_speed = float(np.linalg.norm(v_target))
+        alpha = 0.30 + 0.25 * min(1.0, max(0.0, (raw_speed - 12.0) / 50.0))
+        smooth_v_base[0] = alpha * v_target + (1.0 - alpha) * smooth_v_base[0]
         if np.linalg.norm(smooth_v_base[0]) < 1.0:
             smooth_v_base[0] = np.zeros(3)
+
+        # 鼠标级动力学加速度增益 (Dynamic Velocity Acceleration):
+        # 慢动 1.0x 细腻对准，快挥 2.2x 迅速大跨度覆盖，单次挥手直达推拿目标，告别反复踩离合
+        spd_filtered = float(np.linalg.norm(smooth_v_base[0]))
+        if spd_filtered > 10.0:
+            spd_ratio = min(1.0, (spd_filtered - 10.0) / 60.0)
+            dynamic_gain = 1.0 + (gain_xyz - 1.0) * (spd_ratio ** 1.3)
+            v_amplified = smooth_v_base[0] * dynamic_gain
+        else:
+            v_amplified = smooth_v_base[0]
+
         # 乘以平移线速度缩放比例 lin_scale
-        v_base = tuple(float(x * lin_scale) for x in smooth_v_base[0])
+        v_base = tuple(float(x * lin_scale) for x in v_amplified)
 
         last_wrist[0] = wrist_cam
         last_t[0] = now

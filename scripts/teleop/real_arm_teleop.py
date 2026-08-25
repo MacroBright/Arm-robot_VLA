@@ -366,10 +366,10 @@ def main():
                     help="全局平移线速度缩放比例 (0.01 ~ 1.0, 默认 1.0)")
     ap.add_argument("--ang-scale", type=float, default=1.0,
                     help="全局旋转角速度独立缩放比例 (0.1 ~ 1.5, 默认 1.0 高响应平滑)")
-    ap.add_argument("--gain-roll", type=float, default=2.5,
-                    help="Roll 滚转角度工效学放大增益 (默认 2.5, 人手 ±35° -> 机械臂 ±80°)")
-    ap.add_argument("--gain-pitch", type=float, default=2.0,
-                    help="Pitch 俯仰角度工效学放大增益 (默认 2.0, 人手 ±25° -> 机械臂 ±45°)")
+    ap.add_argument("--max-omega", type=float, default=1.2,
+                    help="摇杆模式最大角速度 (rad/s, 默认 1.2)")
+    ap.add_argument("--deadband-angle", type=float, default=5.0,
+                    help="摇杆模式倾斜死区角度 (deg, 默认 5.0)")
     args = ap.parse_args()
     if not args.gravity_confirm and not args.no_drive:
         sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (空跑测试请加 --no-drive)")
@@ -423,31 +423,28 @@ def main():
 
     # 姿态控制与推拿模态跟踪变量
     current_mode = [MODE_MAP.get(args.mode, MODE_KNEAD)]
-    current_theta_tracked = [np.zeros(3)]
     anchor_r_hand = [None]
-    anchor_pitch = [0.0]
-    anchor_roll = [0.0]
 
-    # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale
+    # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale / 摇杆参数
     lin_scale = max(0.01, min(1.0, float(args.speed_scale)))
     ang_scale = max(0.01, min(1.5, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
-    gain_roll = max(1.0, min(5.0, float(getattr(args, "gain_roll", 2.5))))
-    gain_pitch = max(1.0, min(5.0, float(getattr(args, "gain_pitch", 2.0))))
+    max_omega = max(0.2, min(2.5, float(getattr(args, "max_omega", 1.2))))
+    deadband_angle = max(1.0, min(15.0, float(getattr(args, "deadband_angle", 5.0))))
     smooth_v_base = [np.zeros(3)]
-    smooth_theta_des = [np.zeros(3)]
-    prev_smooth_theta = [np.zeros(3)]
     smooth_w_base = [np.zeros(3)]
 
-    def _amplify_angle(rad: float, deadband_deg: float = 3.0, gain: float = 2.5, max_deg: float = 85.0) -> float:
-        """人体工效学生理角度非线性放大: 将人手有限转角 (±35°) 平滑映射至机械臂推拿大范围 (±85°)."""
-        deg = float(np.degrees(rad))
-        abs_deg = abs(deg)
-        if abs_deg <= deadband_deg:
+    def _joystick_rate(angle_deg: float, deadband_deg: float = 5.0, max_angle_deg: float = 28.0, max_omega_val: float = 1.20) -> float:
+        """虚拟手势摇杆速率响应:
+        - 倾斜角度在死区内 (|angle| <= deadband_deg): 返回 0.0 (锁定保持当前姿态)
+        - 倾斜角度超过死区: 平滑输出正比于倾斜幅度的角速度 (持续持续转动)
+        - 倾斜越大转动越快 (最高达 max_omega_val rad/s)
+        """
+        abs_ang = abs(angle_deg)
+        if abs_ang <= deadband_deg:
             return 0.0
-        eff = abs_deg - deadband_deg
-        out_deg = gain * eff
-        out_deg = min(max_deg, out_deg)
-        return float(np.radians(np.sign(deg) * out_deg))
+        ratio = min(1.0, (abs_ang - deadband_deg) / max(1.0, max_angle_deg - deadband_deg))
+        smooth_ratio = ratio ** 1.4
+        return float(np.sign(angle_deg) * smooth_ratio * max_omega_val)
 
     def hand_provider():
         ok, bgr, depth, K = cam.read_with_depth()
@@ -569,12 +566,9 @@ def main():
         last_wrist[0] = wrist_cam
         last_t[0] = now
 
-        # 2. 方案 1 (绝对姿态 1:1 前馈微分+闭环伺服跟踪) + 方案 2 (推拿任务模态解耦约束)
+        # 2. 虚拟手势摇杆速率姿态控制 (Virtual Hand Joystick Rate Teleop) + 推拿模态解耦
         if anchor_r_hand[0] is None or not teleop.clutch_active:
             anchor_r_hand[0] = r_hand.copy()
-            smooth_theta_des[0] = np.zeros(3)
-            prev_smooth_theta[0] = np.zeros(3)
-            current_theta_tracked[0] = np.zeros(3)
             smooth_w_base[0] = np.zeros(3)
             w_base = (0.0, 0.0, 0.0)
             d_pitch = 0.0
@@ -595,65 +589,47 @@ def main():
 
             # 将人手旋转矢量转换至机械臂基座系
             theta_base_raw = r_cam_to_base @ theta_cam
-            # 符号对齐: Pitch 符号对齐 (人手下压腕 -> 机械臂末端低头下扣; 人手抬腕 -> 机械臂末端抬头扬起)
-            theta_base_raw[0] = -theta_base_raw[0]
+            # 提取人手当前实测俯仰与滚转倾角 (度)
+            # Pitch (绕 X_base): 手腕下压为负，手腕上抬为正
+            hand_pitch_deg = -float(np.degrees(theta_base_raw[0]))
+            # Roll (绕 Y_base): 顺时针右翻为正，逆时针左翻为负
+            hand_roll_deg = float(np.degrees(theta_base_raw[1]))
 
-            # 生理工效学非线性放大 (解决人手生理关节极限与机械臂全幅推拿姿态的失配)
-            theta_amp = np.zeros(3)
-            theta_amp[0] = _amplify_angle(theta_base_raw[0], deadband_deg=2.5, gain=gain_pitch, max_deg=65.0)
-            theta_amp[1] = _amplify_angle(theta_base_raw[1], deadband_deg=3.0, gain=gain_roll, max_deg=90.0)
-            theta_amp[2] = _amplify_angle(theta_base_raw[2], deadband_deg=3.0, gain=1.8, max_deg=75.0)
-
-            # 方案 2: 推拿模态解耦约束 (Tuina Modes)
-            # 在机械臂基座系中:
-            # - Index 0 (绕 X_base) 为 Pitch (驱动 5 轴腕俯仰)
-            # - Index 1 (绕 Y_base) 为 Roll (驱动 4 轴前臂滚转)
-            # - Index 2 (绕 Z_base) 为 Yaw (驱动 1 轴底座偏摆)
+            # 方案 2: 推拿模态解耦约束 (Tuina Modes) 下的虚拟摇杆速率生成
             m = current_mode[0]
             if m == MODE_KNEAD:
-                # 模式 1: 垂直点按揉捏 (姿态全锁定，彻底免疫五指揉捏时的一切干扰)
-                theta_des = np.zeros(3)
+                # 模式 1: 垂直点按揉捏 (姿态全锁定，角速度严格为 0，彻底免疫五指揉捏时的一切干扰)
+                w_pitch = 0.0
+                w_roll = 0.0
             elif m == MODE_ROLL:
-                # 模式 2: 滚法推法 (仅保留沿机械臂前进轴 Y 的滚转 Roll，Pitch 锁定)
-                theta_des = np.array([0.0, theta_amp[1], 0.0])
+                # 模式 2: 滚法推法 (单轴 Roll 摇杆，Pitch 强制锁定为 0)
+                # 倾斜手腕持续滚转，手放平立即锁定保持当前角度
+                w_pitch = 0.0
+                w_roll = _joystick_rate(hand_roll_deg, deadband_deg=deadband_angle,
+                                       max_angle_deg=28.0, max_omega_val=max_omega * ang_scale)
             elif m == MODE_PITCH:
-                # 模式 3: 俯仰调节 (仅保留沿机械臂横向轴 X 的俯仰 Pitch，Roll 锁定)
-                theta_des = np.array([theta_amp[0], 0.0, 0.0])
+                # 模式 3: 俯仰调节 (单轴 Pitch 摇杆，Roll 强制锁定为 0)
+                # 下压手腕持续低头，上抬手腕持续抬头，手放平立即锁定保持当前倾角
+                w_pitch = _joystick_rate(hand_pitch_deg, deadband_deg=deadband_angle,
+                                         max_angle_deg=22.0, max_omega_val=max_omega * ang_scale)
+                w_roll = 0.0
             else:
-                # 模式 4: 全 6-DOF 自由姿态闭环跟随
-                theta_des = theta_amp
+                # 模式 4: 全 6-DOF 自由摇杆姿态调节
+                w_pitch = _joystick_rate(hand_pitch_deg, deadband_deg=deadband_angle,
+                                         max_angle_deg=22.0, max_omega_val=max_omega * ang_scale)
+                w_roll = _joystick_rate(hand_roll_deg, deadband_deg=deadband_angle,
+                                       max_angle_deg=28.0, max_omega_val=max_omega * ang_scale)
 
-            # 方案 1: 前馈微分速度 + 闭环姿态伺服 (消除阶跃跳动，保证充沛平滑力矩)
-            # 1. 目标姿态一阶 EMA 平滑
-            smooth_theta_des[0] = 0.35 * theta_des + 0.65 * smooth_theta_des[0]
+            w_target = np.array([w_pitch, w_roll, 0.0])
 
-            # 2. 前馈角速度 (微分)
-            w_ff = (smooth_theta_des[0] - prev_smooth_theta[0]) / max(0.012, dt)
-            prev_smooth_theta[0] = smooth_theta_des[0].copy()
-
-            # 3. 闭环误差补偿 (P 环)
-            e_ori = smooth_theta_des[0] - current_theta_tracked[0]
-            w_fb = 3.5 * e_ori
-
-            # 4. 合成角速度与动力学限幅 (最高 2.0 rad/s ~ 115 deg/s，电机旋转平稳不抖动)
-            w_raw = (w_ff + w_fb) * ang_scale
-            w_norm = float(np.linalg.norm(w_raw))
-            if w_norm < 0.015:
-                w_clamped = np.zeros(3)
-            else:
-                # 软门限光滑过渡 (tanh 消除硬截断引起的电机微抖)
-                soft_scale = math.tanh(10.0 * (w_norm - 0.01))
-                w_clamped = (w_raw / w_norm) * min(2.0, w_norm) * max(0.0, soft_scale)
-
-            # 5. 积分更新跟踪状态
-            current_theta_tracked[0] += w_clamped * dt
-
-            # 6. EMA 低通平滑输出
-            smooth_w_base[0] = 0.40 * w_clamped + 0.60 * smooth_w_base[0]
+            # EMA 低通平滑输出 (α=0.35)，消除采样微跳，实现丝滑连续转动
+            smooth_w_base[0] = 0.35 * w_target + 0.65 * smooth_w_base[0]
+            if np.linalg.norm(smooth_w_base[0]) < 0.01:
+                smooth_w_base[0] = np.zeros(3)
             w_base = tuple(float(x) for x in smooth_w_base[0])
 
-            d_pitch = float(np.degrees(theta_des[0]))
-            d_roll = float(np.degrees(theta_des[1]))
+            d_pitch = hand_pitch_deg
+            d_roll = hand_roll_deg
 
         info = {"hand_present": True, "confidence": 0.9, "depth_valid": True,
                 "wrist_mm": tuple(float(v) for v in pts[0]),

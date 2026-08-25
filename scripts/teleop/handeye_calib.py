@@ -287,40 +287,40 @@ def main():
                             theta_cam = (ang_rad / ax_norm) * axis
                         theta_b = solved_R @ theta_cam
 
-                        # 人体工效学角度非线性放大 (人手 ±35° -> 机械臂 ±80°)
-                        def _amp(val_deg, deadband=3.0, gain=2.5, max_out=90.0):
-                            a = abs(val_deg)
-                            if a <= deadband:
+                        # 虚拟手势摇杆速率响应 (倾斜持续转动，回平死区保持锁定)
+                        def _joy(angle_deg: float, deadband: float = 5.0, max_ang: float = 28.0, max_w: float = 1.20) -> float:
+                            abs_ang = abs(angle_deg)
+                            if abs_ang <= deadband:
                                 return 0.0
-                            return float(np.sign(val_deg) * min(max_out, gain * (a - deadband)))
+                            r = min(1.0, (abs_ang - deadband) / max(1.0, max_ang - deadband))
+                            return float(np.sign(angle_deg) * (r ** 1.4) * max_w)
 
-                        d_pitch_raw = _amp(-np.degrees(theta_b[0]), deadband=2.5, gain=2.0, max_out=65.0)
-                        d_roll_raw = _amp(np.degrees(theta_b[1]), deadband=3.0, gain=2.5, max_out=90.0)
+                        hand_pitch = -float(np.degrees(theta_b[0]))
+                        hand_roll = float(np.degrees(theta_b[1]))
+                        w_pitch_raw = _joy(hand_pitch, deadband=5.0, max_ang=22.0, max_w=1.20)
+                        w_roll_raw = _joy(hand_roll, deadband=5.0, max_ang=28.0, max_w=1.20)
 
                         # 模态过滤
                         if sandbox_mode[0] == 1:
                             # 模态 1: 垂直点按揉捏 (完全锁定)
-                            d_roll, d_pitch = 0.0, 0.0
+                            w_roll, w_pitch = 0.0, 0.0
                         elif sandbox_mode[0] == 2:
                             # 模态 2: 滚法推法 (仅开放 Roll, 锁 Pitch)
-                            d_roll = d_roll_raw
-                            d_pitch = 0.0
+                            w_roll, w_pitch = w_roll_raw, 0.0
                         elif sandbox_mode[0] == 3:
                             # 模态 3: 俯仰调节 (仅开放 Pitch, 锁 Roll)
-                            d_roll = 0.0
-                            d_pitch = d_pitch_raw
+                            w_roll, w_pitch = 0.0, w_pitch_raw
                         else:
                             # 模态 4: 全 6-DOF
-                            d_roll = d_roll_raw
-                            d_pitch = d_pitch_raw
+                            w_roll, w_pitch = w_roll_raw, w_pitch_raw
 
                 # 中文动作映射实时解析
                 mode_names = {1: "1.点按揉捏(锁定)", 2: "2.滚法(单轴Roll)", 3: "3.俯仰调节(单轴Pitch)", 4: "4.全6DOF(全姿态)"}
                 x_tag = "【+X 向左平移】" if v_b[0] > 10 else ("【-X 向右平移】" if v_b[0] < -10 else "静止")
                 y_tag = "【-Y 前进延伸】" if v_b[1] < -10 else ("【+Y 后退收缩】" if v_b[1] > 10 else "静止")
                 z_tag = "【+Z 向上抬高】" if v_b[2] > 10 else ("【-Z 向下压低】" if v_b[2] < -10 else "静止")
-                roll_tag = "【向右滚转】" if d_roll > 0 else ("【向左滚转】" if d_roll < 0 else "水平 (死区内)")
-                pitch_tag = "【向下低头】" if d_pitch < -5.0 else ("【向上抬头】" if d_pitch > 5.0 else "水平 (死区内)")
+                roll_tag = "【向右持续滚转】" if w_roll > 0.05 else ("【向左持续滚转】" if w_roll < -0.05 else "回平保持 (死区内)")
+                pitch_tag = "【向下持续低头】" if w_pitch < -0.05 else ("【向上持续抬头】" if w_pitch > 0.05 else "回平保持 (死区内)")
                 if sandbox_mode[0] == 1:
                     roll_tag, pitch_tag = "【姿态锁定】", "【姿态锁定】"
                 elif sandbox_mode[0] == 2:
@@ -340,9 +340,9 @@ def main():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1)
                 cv2.putText(bgr, f"平移 Z(上下): {v_b[2]:+5.1f} mm/s -> {z_tag}", (25, 202),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 180, 0), 1)
-                cv2.putText(bgr, f"旋转 Roll : {d_roll:+5.1f} deg  -> {roll_tag}", (25, 232),
+                cv2.putText(bgr, f"摇杆 Roll : {w_roll:+5.2f} rad/s -> {roll_tag}", (25, 232),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 255), 1)
-                cv2.putText(bgr, f"旋转 Pitch: {d_pitch:+5.1f} deg  -> {pitch_tag}", (25, 260),
+                cv2.putText(bgr, f"摇杆 Pitch: {w_pitch:+5.2f} rad/s -> {pitch_tag}", (25, 260),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 255), 1)
 
                 # 手腕圆环与牵引线

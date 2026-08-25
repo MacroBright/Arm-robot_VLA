@@ -211,6 +211,41 @@ MODE_NAMES = {
 }
 MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "pitch": MODE_PITCH, "full": MODE_FULL}
 
+# 灵敏度档位系统 (Sensitivity Speed Gears):
+# 档位 1: 精细操作档 (Fine / 30% 速度, 适用穴位对准、面颈部精细按摩, 高阻尼超稳)
+# 档位 2: 标准推拿档 (Standard / 60% 速度, 适用四肢躯干推拿揉捏, 兼顾响应与安全, 默认)
+# 档位 3: 快速粗调档 (Fast / 100% 速度, 适用大范围快速换位、跨区域移位, 告别反复踩离合)
+GEAR_FINE = 1
+GEAR_STANDARD = 2
+GEAR_FAST = 3
+
+GEAR_CONFIGS = {
+    GEAR_FINE: {
+        "name": "1.精细微操(30%)",
+        "badge": "FINE 30%",
+        "color": (0, 230, 100),       # 浅绿色
+        "lin_scale": 0.30,
+        "gain_xyz": 1.2,
+        "max_omega": 1.2,
+    },
+    GEAR_STANDARD: {
+        "name": "2.标准推拿(60%)",
+        "badge": "STD 60%",
+        "color": (0, 220, 255),       # 明黄色
+        "lin_scale": 0.60,
+        "gain_xyz": 1.8,
+        "max_omega": 2.2,
+    },
+    GEAR_FAST: {
+        "name": "3.快速粗调(100%)",
+        "badge": "FAST 100%",
+        "color": (0, 120, 255),       # 亮橙色
+        "lin_scale": 1.00,
+        "gain_xyz": 2.5,
+        "max_omega": 3.0,
+    },
+}
+
 
 def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
     """在 OpenCV 画面右下角绘制 6 关节 all status 实时监控表 (pos + current + flag)."""
@@ -255,17 +290,17 @@ def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
 
 def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
                   no_drive: bool = False, lin_scale: float = 1.0, ang_scale: float = 1.0,
-                  joint_state=None, mode: int = MODE_KNEAD) -> None:
-    """在 OpenCV 画面上绘制丰富图元 (状态横幅 + 离合徽标 + 锚定球 + 速度矢量 + 数值反馈 + 关节全状态表)."""
+                  joint_state=None, mode: int = MODE_KNEAD, gear: int = GEAR_STANDARD) -> None:
+    """在 OpenCV 画面上绘制丰富图元 (状态横幅 + 离合徽标 + 锚定球 + 速度矢量 + 数值反馈 + 关节全状态表 + 灵敏度档位)."""
     import cv2
     h, w = bgr.shape[:2]
     tag = "[NO-DRIVE] " if no_drive else ""
-    if lin_scale < 1.0 or ang_scale < 1.0:
-        tag += f"[{int(lin_scale * 100)}% LIN | {int(ang_scale * 100)}% ANG] "
+    g_info = GEAR_CONFIGS.get(gear, GEAR_CONFIGS[GEAR_STANDARD])
+    gear_name = g_info["name"]
     phase = out.get("phase", "N/A")
     action = out.get("action", "N/A")
 
-    # 顶部状态横幅 (显示推拿模式)
+    # 顶部状态横幅 (显示推拿模式与灵敏度档位)
     mode_str = MODE_NAMES.get(mode, "")
     if action == "ESTOP" or phase == "STOPPED":
         cv2.rectangle(bgr, (0, 0), (w, 42), (0, 0, 200), -1)
@@ -281,17 +316,17 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         else:
             bar_color = (100, 0, 130)
         cv2.rectangle(bgr, (0, 0), (w, 42), bar_color, -1)
-        txt = f" {tag}[遥操活跃] {mode_str} | [M] 切模式 | [C] 归零 | [SPACE] 暂停"
-        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2)
+        txt = f" {tag}[遥操活跃] {mode_str} | 档位:[{gear_name}] | [S/TAB]换档 | [M]切模式 | [SPACE]暂停"
+        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 2)
     else:
         cv2.rectangle(bgr, (0, 0), (w, 42), (0, 140, 220), -1)
-        txt = f" {tag}[CLUTCH PAUSED] {mode_str} | Press SPACE to Engage Teleop"
-        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+        txt = f" {tag}[CLUTCH PAUSED] {mode_str} | 档位:[{gear_name}] | [S/TAB]换档 | [SPACE]激活"
+        cv2.putText(bgr, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 2)
 
     # 动作与状态机信息
     status_color = (0, 255, 0) if action == "OK" else ((0, 0, 255) if action == "ESTOP" else (0, 200, 255))
     act_str = f"Action: {action} | Phase: {phase} | Mode: {mode_str}"
-    cv2.putText(bgr, act_str, (15, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 2)
+    cv2.putText(bgr, act_str, (15, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_color, 2)
 
     # 速度指令反馈
     cmd = out.get("cmd")
@@ -337,6 +372,10 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
         pose_txt = (f"Tilt: Roll: {hand_info['d_roll_deg']:+5.1f}°({hand_roll_tag}) | "
                     f"Pitch: {hand_info['d_pitch_deg']:+5.1f}°({hand_pitch_tag}){tilt_status}")
         cv2.putText(bgr, pose_txt, (15, 146), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (180, 230, 255), 1)
+
+    # 灵敏度档位指示
+    gear_txt = f"Gear: {gear_name} (Press [S] or [TAB] to Shift Speed)"
+    cv2.putText(bgr, gear_txt, (15, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.50, g_info["color"], 2)
 
     # 右下角绘制 6 关节 all status 实时监测表
     if joint_state is not None:
@@ -428,6 +467,7 @@ def main():
 
     # 姿态控制与推拿模态跟踪变量
     current_mode = [MODE_MAP.get(args.mode, MODE_KNEAD)]
+    current_gear = [GEAR_STANDARD]  # 默认 2 档 (60% 标准推拿档)
     anchor_r_hand = [None]
 
     # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale / 摇杆参数
@@ -499,6 +539,12 @@ def main():
 
         # 成功捕获有效帧: 重置丢帧计数
         loss_count[0] = 0
+
+        # 灵敏度档位动态参数装载 (Gear Parameters)
+        g_cfg = GEAR_CONFIGS.get(current_gear[0], GEAR_CONFIGS[GEAR_STANDARD])
+        g_lin_scale = g_cfg["lin_scale"] * lin_scale
+        g_gain_xyz = g_cfg["gain_xyz"]
+        g_max_omega = g_cfg["max_omega"] * ang_scale
 
         # 1. 位置提取 (纯手腕 3D 深度，彻底免疫手指遮挡)
         wrist_raw = np.array(pts[0], dtype=float)
@@ -574,13 +620,13 @@ def main():
         spd_filtered = float(np.linalg.norm(smooth_v_base[0]))
         if spd_filtered > 10.0:
             spd_ratio = min(1.0, (spd_filtered - 10.0) / 60.0)
-            dynamic_gain = 1.0 + (gain_xyz - 1.0) * (spd_ratio ** 1.3)
+            dynamic_gain = 1.0 + (g_gain_xyz - 1.0) * (spd_ratio ** 1.3)
             v_amplified = smooth_v_base[0] * dynamic_gain
         else:
             v_amplified = smooth_v_base[0]
 
-        # 乘以平移线速度缩放比例 lin_scale
-        v_base = tuple(float(x * lin_scale) for x in v_amplified)
+        # 乘以当前档位平移线速度缩放比例 g_lin_scale
+        v_base = tuple(float(x * g_lin_scale) for x in v_amplified)
 
         last_wrist[0] = wrist_cam
         last_t[0] = now
@@ -625,19 +671,19 @@ def main():
                 # 倾斜手腕持续滚转，手放平立即锁定保持当前角度
                 w_pitch = 0.0
                 w_roll = _joystick_rate(hand_roll_deg, deadband_deg=deadband_angle,
-                                       max_angle_deg=28.0, max_omega_val=max_omega * ang_scale)
+                                       max_angle_deg=28.0, max_omega_val=g_max_omega)
             elif m == MODE_PITCH:
                 # 模式 3: 俯仰调节 (单轴 Pitch 摇杆，Roll 强制锁定为 0)
                 # 下压手腕持续低头，上抬手腕持续抬头，手放平立即锁定保持当前倾角
                 w_pitch = _joystick_rate(hand_pitch_deg, deadband_deg=deadband_angle,
-                                         max_angle_deg=22.0, max_omega_val=max_omega * ang_scale)
+                                         max_angle_deg=22.0, max_omega_val=g_max_omega)
                 w_roll = 0.0
             else:
                 # 模式 4: 全 6-DOF 自由摇杆姿态调节
                 w_pitch = _joystick_rate(hand_pitch_deg, deadband_deg=deadband_angle,
-                                         max_angle_deg=22.0, max_omega_val=max_omega * ang_scale)
+                                         max_angle_deg=22.0, max_omega_val=g_max_omega)
                 w_roll = _joystick_rate(hand_roll_deg, deadband_deg=deadband_angle,
-                                       max_angle_deg=28.0, max_omega_val=max_omega * ang_scale)
+                                       max_angle_deg=28.0, max_omega_val=g_max_omega)
 
             w_target = np.array([w_pitch, w_roll, 0.0])
 
@@ -712,11 +758,17 @@ def main():
             if latest_frame[0] is not None:
                 _draw_overlay(latest_frame[0], out, latest_hand[0], teleop.clutch_active,
                               no_drive=args.no_drive, lin_scale=lin_scale, ang_scale=ang_scale,
-                              joint_state=cached_joint_state[0], mode=current_mode[0])
+                              joint_state=cached_joint_state[0], mode=current_mode[0],
+                              gear=current_gear[0])
                 cv2.imshow(WIN_NAME, latest_frame[0])
 
             k = cv2.waitKey(1) & 0xFF
-            if k in (ord("m"), ord("M")):
+            if k in (ord("s"), ord("S"), 9):  # 9 是 TAB 键，S 也是 Speed/Shift 快捷键
+                current_gear[0] = (current_gear[0] % 3) + 1
+                smooth_v_base[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
+                print(f"[档位切换] 当前灵敏度档位: {GEAR_CONFIGS[current_gear[0]]['name']}")
+            elif k in (ord("m"), ord("M")):
                 current_mode[0] = (current_mode[0] % 4) + 1
                 anchor_r_hand[0] = None
                 smooth_w_base[0] = np.zeros(3)

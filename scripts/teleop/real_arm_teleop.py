@@ -212,40 +212,46 @@ MODE_NAMES = {
 MODE_MAP = {"knead": MODE_KNEAD, "roll": MODE_ROLL, "pitch": MODE_PITCH, "full": MODE_FULL}
 
 # 灵敏度档位系统 (Sensitivity Speed Gears):
-# 灵敏度档位系统 (Sensitivity Speed Gears - 归一化温和操控档位):
-# 档位 1: 低速档 (Low Gear / 平移 3.0%, 姿态 0.30 rad/s, 穴位超微调/精细按摩/安全慢速)
-# 档位 2: 中速档 (Mid Gear / 平移 5.0%, 姿态 0.70 rad/s, 标准推拿揉捏/平顺跟手, 默认)
-# 档位 3: 高速档 (High Gear / 平移 7.0%, 姿态 1.00 rad/s, 适度换位/灵敏姿态调整)
+# 灵敏度档位系统 (Sensitivity Speed Gears):
+# 从集中配置文件 teleop_config.py / teleop_config.yaml 动态构建
+from teleop_config import DEFAULT_TELEOP_CONFIG, TeleopConfig  # noqa: E402
+
 GEAR_FINE = 1
 GEAR_STANDARD = 2
 GEAR_FAST = 3
 
-GEAR_CONFIGS = {
-    GEAR_FINE: {
-        "name": "1.低速档",
-        "badge": "LOW",
-        "color": (0, 230, 100),       # 浅绿色
-        "lin_scale": 0.030,
-        "gain_xyz": 1.0,
-        "max_omega": 0.30,
-    },
-    GEAR_STANDARD: {
-        "name": "2.中速档",
-        "badge": "MID",
-        "color": (0, 220, 255),       # 明黄色
-        "lin_scale": 0.050,
-        "gain_xyz": 1.0,
-        "max_omega": 0.70,
-    },
-    GEAR_FAST: {
-        "name": "3.高速档",
-        "badge": "HIGH",
-        "color": (0, 120, 255),       # 亮橙色
-        "lin_scale": 0.070,
-        "gain_xyz": 1.1,
-        "max_omega": 1.00,
-    },
-}
+
+def build_gear_configs(cfg: TeleopConfig) -> dict:
+    """由 TeleopConfig 数据类动态构建 HUD 与速度计算字典."""
+    return {
+        GEAR_FINE: {
+            "name": cfg.gear.gear_1_low.name,
+            "badge": cfg.gear.gear_1_low.badge,
+            "color": cfg.gear.gear_1_low.color,
+            "lin_scale": cfg.gear.gear_1_low.lin_scale,
+            "gain_xyz": cfg.gear.gear_1_low.gain_xyz,
+            "max_omega": cfg.gear.gear_1_low.max_omega,
+        },
+        GEAR_STANDARD: {
+            "name": cfg.gear.gear_2_mid.name,
+            "badge": cfg.gear.gear_2_mid.badge,
+            "color": cfg.gear.gear_2_mid.color,
+            "lin_scale": cfg.gear.gear_2_mid.lin_scale,
+            "gain_xyz": cfg.gear.gear_2_mid.gain_xyz,
+            "max_omega": cfg.gear.gear_2_mid.max_omega,
+        },
+        GEAR_FAST: {
+            "name": cfg.gear.gear_3_high.name,
+            "badge": cfg.gear.gear_3_high.badge,
+            "color": cfg.gear.gear_3_high.color,
+            "lin_scale": cfg.gear.gear_3_high.lin_scale,
+            "gain_xyz": cfg.gear.gear_3_high.gain_xyz,
+            "max_omega": cfg.gear.gear_3_high.max_omega,
+        },
+    }
+
+
+GEAR_CONFIGS = build_gear_configs(DEFAULT_TELEOP_CONFIG)
 
 
 def _draw_joint_status_table(bgr, joint_state, no_drive: bool = False) -> None:
@@ -404,21 +410,27 @@ def main():
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
     ap.add_argument("--mode", choices=["knead", "roll", "pitch", "full"], default="knead",
                     help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
-    ap.add_argument("--speed-scale", type=float, default=1.0,
-                    help="全局平移线速度缩放比例 (0.01 ~ 1.5, 默认 1.0)")
-    ap.add_argument("--gain-xyz", type=float, default=2.2,
-                    help="XYZ 平移扫掠动态加速度增益 (1.0 ~ 3.5, 默认 2.2, 快速挥手大范围跨越无需多次踩离合)")
-    ap.add_argument("--ang-scale", type=float, default=1.0,
-                    help="全局旋转角速度独立缩放比例 (0.1 ~ 1.5, 默认 1.0 高响应平滑)")
-    ap.add_argument("--max-omega", type=float, default=3.0,
-                    help="摇杆模式最大角速度 (rad/s, 默认 3.0)")
-    ap.add_argument("--deadband-angle", type=float, default=5.0,
-                    help="摇杆模式倾斜死区角度 (deg, 默认 5.0)")
-    ap.add_argument("--joint-factors", default="2.0,2.0,2.0,2.0,1.0,2.0",
-                    help="各关节独立速度倍率因子 J1..J6 (默认 2.0,2.0,2.0,2.0,1.0,2.0, 其中 J5=1.0x 保持不变, 其余 51:1 关节提升 2.0x)")
+    ap.add_argument("--config", default=str(Path(__file__).parent / "teleop_config.yaml"),
+                    help="集中配置文件路径 (.yaml / .json, 默认 scripts/teleop/teleop_config.yaml)")
+    ap.add_argument("--speed-scale", type=float, default=None,
+                    help="全局平移线速度缩放比例 (覆盖配置文件)")
+    ap.add_argument("--gain-xyz", type=float, default=None,
+                    help="XYZ 平移扫掠动态加速度增益 (覆盖配置文件)")
+    ap.add_argument("--ang-scale", type=float, default=None,
+                    help="全局旋转角速度独立缩放比例 (覆盖配置文件)")
+    ap.add_argument("--max-omega", type=float, default=None,
+                    help="摇杆模式最大角速度 (rad/s, 覆盖配置文件)")
+    ap.add_argument("--deadband-angle", type=float, default=None,
+                    help="摇杆模式倾斜死区角度 (deg, 覆盖配置文件)")
+    ap.add_argument("--joint-factors", default=None,
+                    help="各关节独立速度倍率因子 J1..J6 (逗号分隔, 默认读取配置文件)")
     args = ap.parse_args()
     if not args.gravity_confirm and not args.no_drive:
         sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (空跑测试请加 --no-drive)")
+
+    # 载入集中配置文件 (优先使用 YAML/JSON，若不存在使用内置默认数据类)
+    teleop_cfg = TeleopConfig.load(args.config)
+    GEAR_CONFIGS.update(build_gear_configs(teleop_cfg))
 
     import numpy as np  # noqa: E402
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "Leap_Hand" / "python"))
@@ -441,33 +453,40 @@ def main():
     else:
         r_cam_to_base = np.eye(3)
 
+    # 解析各关节速度因子 (CLI 显式传入优先，否则使用配置文件)
+    if args.joint_factors is not None:
+        try:
+            joint_factors = [float(x.strip()) for x in args.joint_factors.split(",") if x.strip()]
+            if len(joint_factors) != 6:
+                joint_factors = teleop_cfg.joint_factor.as_list()
+        except Exception:
+            joint_factors = teleop_cfg.joint_factor.as_list()
+    else:
+        joint_factors = teleop_cfg.joint_factor.as_list()
+
     if args.no_drive:
         from arm_adapter import NoDriveArmAdapter  # noqa: E402
         adapter = NoDriveArmAdapter()
         print("[模式] 已启用 --no-drive 空跑测试模式 (仅做视觉追踪与显示计算，不连接 CAN 总线)")
     else:
-        # 解析各关节速度因子
-        try:
-            joint_factors = [float(x.strip()) for x in args.joint_factors.split(",") if x.strip()]
-            if len(joint_factors) != 6:
-                joint_factors = [2.0, 2.0, 2.0, 2.0, 1.0, 2.0]
-        except Exception:
-            joint_factors = [2.0, 2.0, 2.0, 2.0, 1.0, 2.0]
-
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
         from lerobot_robot_massage.zdt.controller import ZdtController  # noqa: E402
-        ctrl = ZdtController(ZdtConfig(channel=args.iface, speed_rpm=2800.0, position_acc=0,
+        ctrl = ZdtController(ZdtConfig(channel=args.iface,
+                                       speed_rpm=teleop_cfg.motor.speed_rpm,
+                                       position_acc=teleop_cfg.motor.position_acc,
                                        joint_speed_factors=joint_factors,
-                                       max_vel_mm_s=600.0, max_ang_rad_s=10.0,
-                                       max_joint_vel_deg_s=540.0, max_joint_acc_deg_s2=2000.0))
-        adapter = RealArmAdapter(ctrl, max_dq_deg=30.0, joint_factors=joint_factors)
+                                       max_vel_mm_s=teleop_cfg.motor.max_vel_mm_s,
+                                       max_ang_rad_s=teleop_cfg.motor.max_ang_rad_s,
+                                       max_joint_vel_deg_s=teleop_cfg.motor.max_joint_vel_deg_s,
+                                       max_joint_acc_deg_s2=teleop_cfg.motor.max_joint_acc_deg_s2))
+        adapter = RealArmAdapter(ctrl, max_dq_deg=teleop_cfg.motor.max_dq_deg, joint_factors=joint_factors)
 
     watchdog = VisionWatchdog()
     recorder = EpisodeRecorder(args.out)
 
     # 3D 腕部位置滤波 (n_joints=3) 与 3D 姿态李群正交平滑滤波 (n_joints=9)
-    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=1.5, beta=0.08)
-    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=1.0, beta=0.05)
+    pts_filter = OneEuroFilter(n_joints=3, min_cutoff=teleop_cfg.vision.pts_min_cutoff, beta=teleop_cfg.vision.pts_beta)
+    rot_filter = OneEuroFilter(n_joints=9, min_cutoff=teleop_cfg.vision.rot_min_cutoff, beta=teleop_cfg.vision.rot_beta)
 
     latest_frame = [None]
     latest_hand = [None]
@@ -480,15 +499,15 @@ def main():
 
     # 姿态控制与推拿模态跟踪变量
     current_mode = [MODE_MAP.get(args.mode, MODE_KNEAD)]
-    current_gear = [GEAR_STANDARD]  # 默认 2 档 (中速档 192%)
+    current_gear = [teleop_cfg.gear.default_gear]  # 从配置读取默认档位
     anchor_r_hand = [None]
 
     # 速度独立解耦配置: 平移线速度 lin_scale 与旋转角速度 ang_scale / 摇杆参数
-    lin_scale = max(0.01, min(6.0, float(args.speed_scale)))
-    gain_xyz = max(1.0, min(6.0, float(getattr(args, "gain_xyz", 2.2))))
-    ang_scale = max(0.01, min(3.0, float(args.ang_scale))) if hasattr(args, "ang_scale") and args.ang_scale is not None else 1.0
-    max_omega = max(0.2, min(12.0, float(getattr(args, "max_omega", 8.64))))
-    deadband_angle = max(1.0, min(15.0, float(getattr(args, "deadband_angle", 5.0))))
+    lin_scale = max(0.01, min(6.0, float(args.speed_scale))) if args.speed_scale is not None else 1.0
+    gain_xyz = max(1.0, min(6.0, float(args.gain_xyz))) if args.gain_xyz is not None else 1.0
+    ang_scale = max(0.01, min(3.0, float(args.ang_scale))) if args.ang_scale is not None else 1.0
+    max_omega = max(0.2, min(12.0, float(args.max_omega))) if args.max_omega is not None else 3.0
+    deadband_angle = max(1.0, min(15.0, float(args.deadband_angle))) if args.deadband_angle is not None else teleop_cfg.vision.deadband_angle_deg
     smooth_v_base = [np.zeros(3)]
     smooth_w_base = [np.zeros(3)]
 

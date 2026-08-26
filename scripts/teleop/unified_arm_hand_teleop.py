@@ -296,6 +296,11 @@ def main():
                                      joint_factors=joint_factors,
                                      ready_pose=teleop_cfg.pose.ready_pose_deg,
                                      home_pose=teleop_cfg.pose.home_pose_deg)
+        print(f"[机械臂] 正在连接 SocketCAN ({args.iface}) 并初始化 6 个电机...")
+        arm_adapter.connect()
+        arm_adapter.arm(gravity_confirmed=True)
+        arm_adapter.enter_teleop()
+        print(f"[机械臂] 6-DOF 电机已成功上电使能 (状态: {arm_adapter.state()})")
 
     # 3. 灵巧手适配器与映射器初始化
     if args.no_drive_hand:
@@ -686,10 +691,22 @@ def main():
                 print(f"[离合切换] 离合器状态: {'已激活 (CLUTCH ON)' if clutch_active[0] else '已冻结 (FREEZE)'}")
             elif k in (ord("r"), ord("R")):
                 print("[姿态] 机械臂安全运动至按摩准备姿态 (READY)，灵巧手张开...")
+                clutch_active[0] = False
+                anchor_r_hand[0] = None
+                smooth_v_base[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
+                if hasattr(arm_adapter, "re_arm") and arm_adapter.state() == "STOPPED":
+                    arm_adapter.re_arm(gravity_confirmed=True)
                 arm_adapter.ready()
                 hand_adapter.set_open()
             elif k in (ord("h"), ord("H"), ord("o"), ord("O")):
                 print("[姿态] 机械臂安全运动至上电初始姿态 (HOME)，灵巧手张开...")
+                clutch_active[0] = False
+                anchor_r_hand[0] = None
+                smooth_v_base[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
+                if hasattr(arm_adapter, "re_arm") and arm_adapter.state() == "STOPPED":
+                    arm_adapter.re_arm(gravity_confirmed=True)
                 arm_adapter.home()
                 hand_adapter.set_open()
 

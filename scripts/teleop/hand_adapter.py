@@ -105,8 +105,14 @@ class NoDriveHandAdapter:
 class LeapHandAdapter:
     """LEAP Hand 16-DOF 实体硬件适配器."""
 
-    def __init__(self, port: Optional[str] = None, limits_path: Optional[str | Path] = None):
+    def __init__(self, port: Optional[str] = None,
+                 kP: int = 300, kI: int = 0, kD: int = 100, curr_lim: int = 150,
+                 limits_path: Optional[str | Path] = None):
         self.port = port
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
+        self.curr_lim = curr_lim
         self.leap = None
         self.open_pose = DEFAULT_OPEN_POSE.copy()
         self.motor_limits: Optional[Tuple[np.ndarray, np.ndarray]] = None
@@ -160,9 +166,9 @@ class LeapHandAdapter:
                 sys.path.insert(0, str(leap_pkg))
             from main import LeapNode
 
-            self.leap = LeapNode(port=target_port)
+            self.leap = LeapNode(port=target_port, kP=self.kP, kI=self.kI, kD=self.kD, curr_lim=self.curr_lim)
             self.last_commanded_pose = self.open_pose.copy()
-            print(f"[灵巧手] 成功连接并上电 (全开位): port={target_port}")
+            print(f"[灵巧手] 成功连接并上电 (全开位): port={target_port} (kP={self.kP}, kD={self.kD}, curr_lim={self.curr_lim}mA)")
             return True
         except Exception as e:
             print(f"[灵巧手错误] 连接失败: {e}")

@@ -57,7 +57,8 @@ def test_teleop_config_load_yaml():
         assert cfg.gear.gear_3_high.lin_scale == 0.085
         assert cfg.pose.ready_pose_deg == [0.0, 90.0, 60.0, 0.0, 130.0, 0.0]
         assert cfg.hand.port == "/dev/ttyUSB0"
-        assert cfg.hand.kP == 600
+        assert cfg.hand.kP == 300
+        assert cfg.hand.curr_lim == 180
         assert cfg.hand.source_mode == 2
 
 

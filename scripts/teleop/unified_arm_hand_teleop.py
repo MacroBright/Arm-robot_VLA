@@ -249,8 +249,8 @@ def _draw_unified_dashboard(frame: np.ndarray,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 255), 1)
 
     # 8. 底部操作提示栏
-    cv2.putText(frame, "SPACE: Arm Pause/Resume | Z: Wrist Zero | W: Watchdog Reset | K: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | Q: Quit",
-                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
+    cv2.putText(frame, "SPACE: Arm Pause | L: Hand Pause | Z: Wrist Zero | W: Watchdog Reset | K: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | Q: Quit",
+                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
 
 
 def main():
@@ -304,8 +304,14 @@ def main():
         print("[灵巧手] 已启用 --no-drive-hand 空跑测试模式 (不连接串口)")
     else:
         target_port = args.hand_port or teleop_cfg.hand.port
-        hand_adapter = LeapHandAdapter(port=target_port)
-        print(f"[灵巧手] 实体驱动就绪 (按 SPACE 延迟上电): port={target_port}")
+        hand_adapter = LeapHandAdapter(
+            port=target_port,
+            kP=teleop_cfg.hand.kP,
+            kI=teleop_cfg.hand.kI,
+            kD=teleop_cfg.hand.kD,
+            curr_lim=teleop_cfg.hand.curr_lim,
+        )
+        print(f"[灵巧手] 实体驱动就绪 (按 K 键校准并上电): port={target_port} (kP={teleop_cfg.hand.kP}, kD={teleop_cfg.hand.kD}, curr_lim={teleop_cfg.hand.curr_lim}mA)")
 
     mapper = JointMapper()
     calibrator = Calibrator(mapper)
@@ -316,7 +322,7 @@ def main():
     cam = open_realsense()
     if cam is None:
         sys.exit("[错误] 未检测到 RealSense D455 深度相机")
-    tracker = HandTracker(max_num_hands=1, min_detection_confidence=0.5)
+    tracker = HandTracker(max_num_hands=1, min_detection_confidence=0.35)
 
     calib_path = Path(args.calib)
     if calib_path.exists():
@@ -525,10 +531,14 @@ def main():
                         raw_angles = calibrator.map_points(pts, frame=p_frame)
                         hand_bent, _ = finger_id.identify_points(pts)
 
-                    hand_angles = hand_angle_filter(raw_angles)
-
-                    # 下发灵巧手舵机目标
-                    hand_adapter.set_angles(hand_angles)
+                    if hand_clutch_active[0]:
+                        hand_angles = hand_angle_filter(raw_angles)
+                        # 下发灵巧手舵机目标
+                        hand_adapter.set_angles(hand_angles)
+                    else:
+                        # 灵巧手处于暂停锁定状态 (维持全开姿态)
+                        hand_adapter.set_open()
+                        hand_angles = np.zeros(16, dtype=np.float64)
 
             # ── 4. 手部丢失/遮挡平滑缓冲 (1~3 帧时域惯性缓冲，防止边缘偶发丢帧顿挫) ──
             if not hand_detected or palm_pts is None:
@@ -593,7 +603,7 @@ def main():
                 joint_state=cached_joint_state[0],
                 hand_angles=hand_angles,
                 hand_bent=hand_bent,
-                hand_state_str=hand_adapter.state(),
+                hand_state_str=("PAUSED (OPEN)" if not hand_clutch_active[0] else hand_adapter.state()) if hand_adapter.is_connected() else "UNPOWERED",
                 clutch_active=clutch_active[0],
                 arm_mode=current_mode[0],
                 arm_gear=current_gear[0],
@@ -612,12 +622,19 @@ def main():
                 print("[系统] 用户请求退出，安全停机...")
                 break
             elif k == ord(" "):
-                # SPACE: 机械臂遥操暂停 / 恢复跟随 (Clutch Toggle)
+                # SPACE: 机械臂遥操暂停 / 恢复跟随 (Arm Clutch Toggle)
                 clutch_active[0] = not clutch_active[0]
                 anchor_r_hand[0] = None
                 smooth_v_base[0] = np.zeros(3)
                 smooth_w_base[0] = np.zeros(3)
                 print(f"[机械臂遥操] {'已恢复跟随 (RUN)' if clutch_active[0] else '已暂停锁定 (PAUSE)'}")
+            elif k in (ord("l"), ord("L")):
+                # L: 灵巧手遥操暂停锁定 / 恢复跟随 (Hand Clutch Toggle)
+                hand_clutch_active[0] = not hand_clutch_active[0]
+                if not hand_clutch_active[0]:
+                    hand_adapter.set_open()
+                    hand_angle_filter.reset()
+                print(f"[灵巧手遥操] {'已恢复跟随 (RUN)' if hand_clutch_active[0] else '已暂停锁定全开姿态 (PAUSE/OPEN)'}")
             elif k in (ord("z"), ord("Z")):
                 # Z: 机械臂手腕姿态回零校准 (将当前姿态设为 0° 中立基准)
                 anchor_r_hand[0] = None

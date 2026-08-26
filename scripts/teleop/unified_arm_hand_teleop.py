@@ -346,6 +346,7 @@ def main():
     anchor_r_hand = [None]
     smooth_v_base = [np.zeros(3)]
     smooth_w_base = [np.zeros(3)]
+    loss_count = [0]
 
     cached_joint_state = [None]
     last_joint_poll = [0.0]
@@ -379,7 +380,7 @@ def main():
                 continue
 
             # 同步镜像翻转 BGR 与 Depth，确保全局视野深度反投影完全对齐 (不再局限于中心区域)
-            frame = cv2.flip(bgr, 1)
+            frame_native = cv2.flip(bgr, 1)
             depth_flipped = cv2.flip(depth, 1) if depth is not None else None
 
             # 内参主点 cx 对应水平镜像变换: cx_mirrored = depth_w - cx
@@ -389,10 +390,15 @@ def main():
             else:
                 K_mirrored = K
 
-            if frame.shape[1] != 1280 or frame.shape[0] != 720:
-                frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
+            # 在原始无形变分辨率上运行 MediaPipe 检测 (避免非均匀拉伸导致边界丢帧，且提升运行速度)
+            results = tracker.detect(frame_native)
+
+            # 构建 1280x720 宽屏显示画布
+            if frame_native.shape[1] != 1280 or frame_native.shape[0] != 720:
+                frame = cv2.resize(frame_native, (1280, 720), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = frame_native.copy()
             h, w = frame.shape[:2]
-            results = tracker.detect(frame)
 
             hand_detected = False
             arm_action = "MOVE"
@@ -410,6 +416,10 @@ def main():
                     if teleop_cfg.hand.hand_type == "first" or r.handedness.lower() == target_hand_label:
                         matched_hand = r
                         break
+
+                # 边界容错降级: 若视野中仅检测到 1 只手，避免因边界裁剪导致左右手判别跳变而丢帧
+                if matched_hand is None and len(results) == 1:
+                    matched_hand = results[0]
 
                 if matched_hand is not None:
                     hand_detected = True
@@ -520,19 +530,24 @@ def main():
                     # 下发灵巧手舵机目标
                     hand_adapter.set_angles(hand_angles)
 
-            # ── 4. 手部丢失/遮挡保护 ──────────────────────────────────
-            if not hand_detected:
-                last_wrist[0] = None
-                last_t[0] = None
-                smooth_v_base[0] = np.zeros(3)
-                smooth_w_base[0] = np.zeros(3)
-                pseudo_smoother.reset()
-                world_smoother.reset()
-                frame_smoother.reset()
-                hand_angle_filter.reset()
-
-                # 灵巧手平滑回全开安全位
-                hand_adapter.relax_step(now)
+            # ── 4. 手部丢失/遮挡平滑缓冲 (1~3 帧时域惯性缓冲，防止边缘偶发丢帧顿挫) ──
+            if not hand_detected or palm_pts is None:
+                loss_count[0] += 1
+                if loss_count[0] <= 3 and last_wrist[0] is not None:
+                    smooth_v_base[0] = smooth_v_base[0] * 0.90
+                    smooth_w_base[0] = smooth_w_base[0] * 0.90
+                else:
+                    last_wrist[0] = None
+                    last_t[0] = None
+                    smooth_v_base[0] = np.zeros(3)
+                    smooth_w_base[0] = np.zeros(3)
+                    pseudo_smoother.reset()
+                    world_smoother.reset()
+                    frame_smoother.reset()
+                    hand_angle_filter.reset()
+                    hand_adapter.relax_step(now)
+            else:
+                loss_count[0] = 0
 
             # ── 5. 看门狗检测与机械臂下发 ────────────────────────────
             action, wd_scale = watchdog.update(

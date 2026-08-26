@@ -12,11 +12,11 @@ from scripts.teleop.hand_adapter import (
 
 def test_nodrive_hand_adapter_basic():
     adapter = NoDriveHandAdapter()
-    assert not adapter.is_connected
+    assert not adapter.is_connected()
     assert adapter.state() == "UNPOWERED"
 
     adapter.connect()
-    assert adapter.is_connected
+    assert adapter.is_connected()
     assert adapter.state() == "POWERED_OPEN"
 
     # 设置角度
@@ -27,6 +27,13 @@ def test_nodrive_hand_adapter_basic():
     np.testing.assert_allclose(adapter.get_current_angles(), test_angles)
     assert adapter.state() == "TELEOP"
 
+    # 丢失保护 relax_step 测试
+    p_relax0 = adapter.relax_step(now=10.0, hold_time=0.3, ramp_time=0.6)
+    np.testing.assert_allclose(p_relax0, expected_pos)
+    p_relax_done = adapter.relax_step(now=12.0, hold_time=0.3, ramp_time=0.6)
+    np.testing.assert_allclose(p_relax_done, DEFAULT_OPEN_POSE)
+    adapter.reset_loss_state()
+
     # 回全开位
     open_pos = adapter.set_open()
     np.testing.assert_allclose(open_pos, DEFAULT_OPEN_POSE)
@@ -34,7 +41,7 @@ def test_nodrive_hand_adapter_basic():
     assert adapter.state() == "OPEN"
 
     adapter.disconnect()
-    assert not adapter.is_connected
+    assert not adapter.is_connected()
     assert adapter.state() == "DISCONNECTED"
 
 

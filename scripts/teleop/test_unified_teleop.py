@@ -81,4 +81,4 @@ def test_unified_arm_hand_coordination():
 
     arm.disconnect()
     hand.disconnect()
-    assert not hand.is_connected
+    assert not hand.is_connected()

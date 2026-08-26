@@ -39,17 +39,22 @@ class NoDriveHandAdapter:
         self.open_pose = open_pose.copy() if open_pose is not None else DEFAULT_OPEN_POSE.copy()
         self.curr_pos = self.open_pose.copy()
         self.curr_angles = np.zeros(16, dtype=np.float64)
-        self.is_connected = False
+        self._connected = False
         self._phase = "UNPOWERED"
+        self.loss_t0: Optional[float] = None
+        self.relax_from: Optional[np.ndarray] = None
 
     def connect(self, port: Optional[str] = None) -> bool:
-        self.is_connected = True
+        self._connected = True
         self._phase = "POWERED_OPEN"
         return True
 
     def disconnect(self) -> None:
-        self.is_connected = False
+        self._connected = False
         self._phase = "DISCONNECTED"
+
+    def is_connected(self) -> bool:
+        return self._connected
 
     def set_angles(self, angles_16: np.ndarray) -> np.ndarray:
         """输入 16 维相对全开位关节弯曲角度 (rad) -> 更新模拟电机位置."""
@@ -64,6 +69,28 @@ class NoDriveHandAdapter:
         self.curr_pos = self.open_pose.copy()
         self._phase = "OPEN"
         return self.curr_pos
+
+    def relax_step(self, now: float, hold_time: float = 0.30, ramp_time: float = 0.60) -> np.ndarray:
+        """空跑模式下的平滑回全开位 (Relax to OPEN)."""
+        if self.loss_t0 is None:
+            self.loss_t0 = now
+            self.relax_from = self.curr_pos.copy()
+
+        elapsed = now - self.loss_t0
+        if elapsed < hold_time:
+            self.curr_pos = self.relax_from.copy()
+        else:
+            t = min(1.0, (elapsed - hold_time) / max(0.01, ramp_time))
+            self.curr_pos = self.relax_from + (self.open_pose - self.relax_from) * t
+            self.curr_angles = (self.curr_pos - self.open_pose) * JOINT_DIR
+
+        self._phase = "RELAX"
+        return self.curr_pos
+
+    def reset_loss_state(self) -> None:
+        """重置手部丢失回退计时器."""
+        self.loss_t0 = None
+        self.relax_from = None
 
     def get_positions(self) -> np.ndarray:
         return self.curr_pos.copy()

@@ -300,7 +300,8 @@ def main():
         arm_adapter.connect()
         arm_adapter.arm(gravity_confirmed=True)
         arm_adapter.enter_teleop()
-        print(f"[机械臂] 6-DOF 电机已成功上电使能 (状态: {arm_adapter.state()})")
+        arm_adapter.ready()
+        print(f"[机械臂] 6-DOF 电机已成功上电并到达准备姿态 (状态: {arm_adapter.state()})")
 
     # 3. 灵巧手适配器与映射器初始化
     if args.no_drive_hand:
@@ -349,8 +350,8 @@ def main():
     # 6. 控制循环状态变量
     current_mode = [MODE_MAP.get(args.mode, MODE_ROLL)]
     current_gear = [teleop_cfg.gear.default_gear]
-    clutch_active = [True]          # 机械臂跟随离合器状态 (SPACE 键)
-    hand_clutch_active = [True]     # 灵巧手跟随离合器状态 (L 键)
+    clutch_active = [False]         # 机械臂跟随离合器状态 (默认以 PAUSE 安全离合态启动，按 SPACE 激活)
+    hand_clutch_active = [True]     # 灵巧手跟随离合器状态 (L 键控制)
     source_mode = [teleop_cfg.hand.source_mode]
 
     last_wrist = [None]
@@ -565,26 +566,40 @@ def main():
                 loss_count[0] = 0
 
             # ── 5. 看门狗检测与机械臂下发 ────────────────────────────
-            action, wd_scale = watchdog.update(
-                hand_present=hand_detected,
-                hand_confidence=1.0 if hand_detected else 0.0,
-                depth_valid=True if hand_detected else False,
-                wrist_mm=last_wrist[0],
-                now=now,
-            )
-
-            if clutch_active[0] and action != WatchdogAction.STOP and arm_adapter.state() != "STOPPED":
-                scaled_v = smooth_v_base[0] * wd_scale
-                scaled_w = smooth_w_base[0] * wd_scale
-                arm_cmd = CartesianCommand(
-                    (float(scaled_v[0]), float(scaled_v[1]), float(scaled_v[2])),
-                    (float(scaled_w[0]), float(scaled_w[1]), float(scaled_w[2])),
-                    timestamp=now,
+            if clutch_active[0]:
+                action, wd_scale = watchdog.update(
+                    hand_present=hand_detected,
+                    hand_confidence=1.0 if hand_detected else 0.0,
+                    depth_valid=True if hand_detected else False,
+                    wrist_mm=last_wrist[0],
+                    now=now,
                 )
-                arm_adapter.move_cartesian_velocity(arm_cmd)
-            elif action == WatchdogAction.ESTOP:
-                arm_adapter.e_stop()
-                clutch_active[0] = False
+
+                if action == WatchdogAction.ESTOP:
+                    if arm_adapter.state() != "STOPPED":
+                        arm_adapter.e_stop()
+                    clutch_active[0] = False
+                    scaled_v = np.zeros(3)
+                    scaled_w = np.zeros(3)
+                elif action != WatchdogAction.STOP and arm_adapter.state() != "STOPPED":
+                    scaled_v = smooth_v_base[0] * wd_scale
+                    scaled_w = smooth_w_base[0] * wd_scale
+                    arm_cmd = CartesianCommand(
+                        (float(scaled_v[0]), float(scaled_v[1]), float(scaled_v[2])),
+                        (float(scaled_w[0]), float(scaled_w[1]), float(scaled_w[2])),
+                        timestamp=now,
+                    )
+                    arm_adapter.move_cartesian_velocity(arm_cmd)
+                else:
+                    scaled_v = np.zeros(3)
+                    scaled_w = np.zeros(3)
+            else:
+                # 机械臂暂停离合态: 重置看门狗，下发零速度保持，不误触发急停
+                watchdog.reset()
+                action = WatchdogAction.WARN
+                wd_scale = 1.0
+                scaled_v = np.zeros(3)
+                scaled_w = np.zeros(3)
 
             # ── 6. 状态轮询与界面渲染 ────────────────────────────────
             if now - last_joint_poll[0] >= 0.08:
@@ -597,7 +612,7 @@ def main():
             _draw_unified_dashboard(
                 frame=frame,
                 arm_out={
-                    "action": action.name,
+                    "action": "PAUSED" if not clutch_active[0] else action.name,
                     "v": scaled_v,
                     "w": scaled_w,
                     "d_roll_deg": roll_deg,
@@ -627,11 +642,18 @@ def main():
                 print("[系统] 用户请求退出，安全停机...")
                 break
             elif k == ord(" "):
-                # SPACE: 机械臂遥操暂停 / 恢复跟随 (Arm Clutch Toggle)
+                # SPACE: 机械臂遥操暂停 / 恢复跟随 (Arm Clutch Toggle / Re-arm)
+                if arm_adapter.state() == "STOPPED":
+                    if hasattr(arm_adapter, "re_arm"):
+                        arm_adapter.re_arm(gravity_confirmed=True)
+                    watchdog.reset()
+                    print("[恢复] 机械臂已解除急停锁定并重新使能 (Re-armed)")
                 clutch_active[0] = not clutch_active[0]
                 anchor_r_hand[0] = None
                 smooth_v_base[0] = np.zeros(3)
                 smooth_w_base[0] = np.zeros(3)
+                if clutch_active[0]:
+                    watchdog.reset()
                 print(f"[机械臂遥操] {'已恢复跟随 (RUN)' if clutch_active[0] else '已暂停锁定 (PAUSE)'}")
             elif k in (ord("l"), ord("L")):
                 # L: 灵巧手遥操暂停锁定当前姿态 / 恢复跟随 (Hand Clutch Toggle)

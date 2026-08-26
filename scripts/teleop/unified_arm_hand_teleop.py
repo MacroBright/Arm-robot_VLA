@@ -634,13 +634,21 @@ def main():
                     arm_adapter.arm(gravity_confirmed=True)
                 print("\n  *** 视觉看门狗已手动复位并重新使能 (Watchdog Reset & Re-armed)! ***\n")
             elif k in (ord("k"), ord("K")):
-                # K: 灵巧手张开全开校准
+                # K: 灵巧手五指全开校准并使能上电 (Calibrate & Auto Power-on)
                 if hand_detected and 'pts' in locals() and 'p_frame' in locals():
                     calibrator.calibrate_points(pts, frame=p_frame)
                     hand_angle_filter.reset()
-                    print("\n  *** 灵巧手五指全开校准完成! ***\n")
+                    if not args.no_drive_hand and not hand_adapter.is_connected():
+                        print("[灵巧手] 正在连接串口并使能 Dynamixel 舵机...")
+                        if hand_adapter.connect():
+                            print("  *** 灵巧手已成功连接使能上电，并同步为人手全开姿态! ***")
+                        else:
+                            print("  [警告] 灵巧手串口连接失败，请检查 USB 串口连接与电源")
+                    print("\n  *** 灵巧手五指全开校准完成 (已同步为全开姿态)! ***\n")
+                else:
+                    print("[提示] 请将手部置于相机视野中完全张开五指后再按 K 进行校准与上电")
             elif k in (ord("p"), ord("P")):
-                # P: 灵巧手延迟上电
+                # P: 灵巧手延迟上电 / 断开切换
                 if not args.no_drive_hand and not hand_adapter.is_connected():
                     hand_adapter.connect()
             elif k in (ord("s"), ord("S"), 9):  # TAB or S: 切换机械臂档位

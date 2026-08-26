@@ -93,6 +93,36 @@ class GearConfig:
     ))
 
 
+def build_gear_configs(cfg: TeleopConfig) -> dict:
+    """由 TeleopConfig 数据类动态构建 HUD 与速度计算字典 (1=LOW, 2=MID, 3=HIGH)."""
+    return {
+        1: {
+            "name": cfg.gear.gear_1_low.name,
+            "badge": cfg.gear.gear_1_low.badge,
+            "color": cfg.gear.gear_1_low.color,
+            "lin_scale": cfg.gear.gear_1_low.lin_scale,
+            "gain_xyz": cfg.gear.gear_1_low.gain_xyz,
+            "max_omega": cfg.gear.gear_1_low.max_omega,
+        },
+        2: {
+            "name": cfg.gear.gear_2_mid.name,
+            "badge": cfg.gear.gear_2_mid.badge,
+            "color": cfg.gear.gear_2_mid.color,
+            "lin_scale": cfg.gear.gear_2_mid.lin_scale,
+            "gain_xyz": cfg.gear.gear_2_mid.gain_xyz,
+            "max_omega": cfg.gear.gear_2_mid.max_omega,
+        },
+        3: {
+            "name": cfg.gear.gear_3_high.name,
+            "badge": cfg.gear.gear_3_high.badge,
+            "color": cfg.gear.gear_3_high.color,
+            "lin_scale": cfg.gear.gear_3_high.lin_scale,
+            "gain_xyz": cfg.gear.gear_3_high.gain_xyz,
+            "max_omega": cfg.gear.gear_3_high.max_omega,
+        },
+    }
+
+
 # ==============================================================================
 # 2. 6 关节独立速度补偿配置 (Per-Joint Speed Factor Configuration)
 # ==============================================================================
@@ -273,7 +303,63 @@ class VisionFilterConfig:
 
 
 # ==============================================================================
-# 6. 全局汇总配置主类 (Master Teleoperation Configuration)
+# 6. 灵巧手控制与滤波配置 (Dexterous Hand Configuration)
+# ==============================================================================
+
+@dataclass
+class HandConfig:
+    """LEAP Hand 16-DOF 灵巧手硬件与视觉映射配置."""
+
+    port: str = "/dev/ttyUSB0"
+    """
+    【灵巧手 Dynamixel 串口路径】
+    - 物理硬件: USB 转 TTL 串口适配器 (默认 /dev/ttyUSB0, 亦可自动搜索).
+    """
+
+    kP: int = 600
+    """【位置环比例增益 kP】 (默认 600, 侧摆轴 0/4/8 自动乘以 0.75)"""
+
+    kI: int = 0
+    """【位置环积分增益 kI】 (默认 0)"""
+
+    kD: int = 200
+    """【位置环微分增益 kD】 (默认 200, 侧摆轴 0/4/8 自动乘以 0.75)"""
+
+    curr_lim: int = 350
+    """
+    【电机最大电流限制 (Current Limit)】
+    - 物理单位: mA (毫安, 默认 350mA, 防止揉捏过力堵转发热).
+    """
+
+    filter_min_cutoff: float = 1.0
+    """
+    【手指 16 关节 1€ 滤波基准截止频率 (Min Cutoff)】
+    - 物理单位: Hz (默认 1.0 Hz, 抑制指尖抖动).
+    """
+
+    filter_beta: float = 0.02
+    """
+    【手指 16 关节 1€ 滤波速度响应系数 (Beta)】
+    - 调参建议: 0.01 ~ 0.05 (手速越快截止频率越高，兼顾抗噪与灵敏).
+    """
+
+    source_mode: int = 2
+    """
+    【3D 关键点来源模式】
+    - 0: HaMeR 3D (MANO 回归真 3D);
+    - 1: MediaPipe World 3D (规范 3D 模型);
+    - 2: MediaPipe Pseudo 3D (原伪 3D 深度，实机跟手性与握拳效果最佳, 默认).
+    """
+
+    bend_threshold: float = 0.20
+    """【手指弯曲判定阈值 (Bend Threshold)】 (rad, 默认 0.20 rad)"""
+
+    hand_type: str = "right"
+    """【物理控制目标手 (Hand Target)】 ('right' / 'left' / 'first')"""
+
+
+# ==============================================================================
+# 7. 全局汇总配置主类 (Master Teleoperation Configuration)
 # ==============================================================================
 
 @dataclass
@@ -284,6 +370,7 @@ class TeleopConfig:
     motor: MotorLimitConfig = field(default_factory=MotorLimitConfig)
     pose: PresetPoseConfig = field(default_factory=PresetPoseConfig)
     vision: VisionFilterConfig = field(default_factory=VisionFilterConfig)
+    hand: HandConfig = field(default_factory=HandConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为标准字典 (便于序列化为 JSON / YAML)."""
@@ -312,6 +399,9 @@ class TeleopConfig:
 
         if "vision" in data and isinstance(data["vision"], dict):
             cfg.vision = VisionFilterConfig(**data["vision"])
+
+        if "hand" in data and isinstance(data["hand"], dict):
+            cfg.hand = HandConfig(**data["hand"])
 
         return cfg
 
@@ -371,6 +461,20 @@ class TeleopConfig:
             raise ValueError(f"[视觉滤波] pts_beta={self.vision.pts_beta} 超出有效范围 [0.001, 1.0]")
         if not (0.5 <= self.vision.deadband_angle_deg <= 20.0):
             raise ValueError(f"[摇杆死区] deadband_angle_deg={self.vision.deadband_angle_deg}° 超出有效范围 [0.5, 20.0]")
+
+        # 6. 灵巧手参数校验
+        if not (50 <= self.hand.kP <= 1500):
+            raise ValueError(f"[灵巧手] kP={self.hand.kP} 超出安全范围 [50, 1500]")
+        if not (10 <= self.hand.kD <= 600):
+            raise ValueError(f"[灵巧手] kD={self.hand.kD} 超出安全范围 [10, 600]")
+        if not (50 <= self.hand.curr_lim <= 800):
+            raise ValueError(f"[灵巧手电流] curr_lim={self.hand.curr_lim} mA 超出安全范围 [50, 800]")
+        if not (0.1 <= self.hand.filter_min_cutoff <= 10.0):
+            raise ValueError(f"[灵巧手滤波] filter_min_cutoff={self.hand.filter_min_cutoff} Hz 超出有效范围 [0.1, 10.0]")
+        if self.hand.source_mode not in (0, 1, 2):
+            raise ValueError(f"[灵巧手源] source_mode={self.hand.source_mode} 必须为 0(HAMER), 1(WORLD), 2(PSEUDO)")
+        if self.hand.hand_type not in ("right", "left", "first"):
+            raise ValueError(f"[灵巧手目标] hand_type={self.hand.hand_type} 必须为 'right', 'left' 或 'first'")
 
         return warnings
 

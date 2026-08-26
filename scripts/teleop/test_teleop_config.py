@@ -50,17 +50,22 @@ def test_teleop_config_load_yaml():
         cfg = TeleopConfig.load(yaml_path)
         assert cfg.gear.default_gear == 2
         assert cfg.joint_factor.j5_wrist_pitch == 1.0
-        assert cfg.joint_factor.j1_base_yaw == 2.0
+        assert cfg.joint_factor.j1_base_yaw == 2.5
+        assert cfg.joint_factor.j4_wrist_roll_1 == 1.5
         assert cfg.motor.speed_rpm == 2000.0
         assert cfg.gear.gear_2_mid.lin_scale == 0.080
-        assert cfg.gear.gear_3_high.lin_scale == 1.000
-        assert cfg.pose.ready_pose_deg == [0.0, 65.0, 50.0, 0.0, 130.0, 0.0]
+        assert cfg.gear.gear_3_high.lin_scale == 0.085
+        assert cfg.pose.ready_pose_deg == [0.0, 80.0, 60.0, 0.0, 130.0, 0.0]
+        assert cfg.hand.port == "/dev/ttyUSB0"
+        assert cfg.hand.kP == 600
+        assert cfg.hand.source_mode == 2
 
 
 def test_teleop_config_save_and_load_temp():
     cfg = TeleopConfig()
     cfg.gear.default_gear = 3
     cfg.motor.speed_rpm = 2500.0
+    cfg.hand.curr_lim = 400
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_yaml = Path(tmp_dir) / "test_cfg.yaml"
         cfg.save_yaml(tmp_yaml)
@@ -69,6 +74,7 @@ def test_teleop_config_save_and_load_temp():
         loaded = TeleopConfig.load(tmp_yaml)
         assert loaded.gear.default_gear == 3
         assert loaded.motor.speed_rpm == 2500.0
+        assert loaded.hand.curr_lim == 400
 
 
 def test_teleop_config_validation_safety():
@@ -92,4 +98,16 @@ def test_teleop_config_validation_safety():
     cfg.joint_factor.j1_base_yaw = 10.0
     with pytest.raises(ValueError, match="超出安全范围"):
         cfg.validate()
+    cfg.joint_factor.j1_base_yaw = 2.0
+
+    # 异常测试 4: 灵巧手参数非法
+    cfg.hand.kP = 2000
+    with pytest.raises(ValueError, match="超出安全范围"):
+        cfg.validate()
+    cfg.hand.kP = 600
+
+    cfg.hand.source_mode = 5
+    with pytest.raises(ValueError, match="必须为 0"):
+        cfg.validate()
+
 

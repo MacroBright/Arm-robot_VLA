@@ -441,7 +441,7 @@ def main():
                 hand_adapter.relax_step(now)
 
             # ── 5. 看门狗检测与机械臂下发 ────────────────────────────
-            action, wd_scale = watchdog.check(
+            action, wd_scale = watchdog.update(
                 hand_present=hand_detected,
                 hand_confidence=1.0 if hand_detected else 0.0,
                 depth_valid=True if hand_detected else False,

@@ -72,3 +72,6 @@ class VisionWatchdog:
         """重置看门狗丢失状态与历史记录 (离合重置/恢复时调用)."""
         self._loss_start = None
         self._last_wrist = None
+
+    check = update
+

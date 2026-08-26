@@ -253,8 +253,8 @@ def _draw_unified_dashboard(frame: np.ndarray,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
 
     # 8. 底部操作提示栏
-    cv2.putText(frame, "SPACE: Arm Pause/Resume | Z: Wrist Zero | K: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | R: Ready | H: Home | Q: Quit",
-                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
+    cv2.putText(frame, "SPACE: Arm Pause/Resume | Z: Wrist Zero | W: Watchdog Reset | K: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | Q: Quit",
+                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
 
 
 def main():
@@ -366,7 +366,7 @@ def main():
 
     print("\n" + "=" * 75)
     print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统 (全视野 1280x720 宽屏 HUD)")
-    print("  SPACE: 暂停/跟随 | Z: 手腕姿态回零 | K: 灵巧手校准 | P: 灵巧手上电 | S/TAB: 换档 | M: 模式 | Q: 退出")
+    print("  SPACE: 暂停/跟随 | Z: 姿态回零 | W: 看门狗复位 | K: 灵巧手校准 | P: 灵巧手上电 | S/TAB: 换档 | M: 模式 | Q: 退出")
     print("=" * 75 + "\n")
 
     try:
@@ -476,9 +476,9 @@ def main():
                                 else:
                                     r_rel = r_palm @ anchor_r_hand[0].T
 
-                                # 提取相对于中立基准的偏角 (度)
+                                # 提取相对于中立基准的偏角 (度) — 修复符号调换: 下压为负, 上抬为正
                                 roll_deg = float(np.degrees(np.arctan2(r_rel[2, 0], r_rel[2, 2])))
-                                pitch_deg = float(np.degrees(np.arctan2(r_rel[2, 1], r_rel[2, 2])))
+                                pitch_deg = - float(np.degrees(np.arctan2(r_rel[2, 1], r_rel[2, 2])))
 
                                 # 模式角度解算
                                 curr_g = gear_configs[current_gear[0]]
@@ -612,6 +612,16 @@ def main():
                 anchor_r_hand[0] = None
                 smooth_w_base[0] = np.zeros(3)
                 print("\n  *** 机械臂手腕姿态已回零校准 (当前手势设为 0° 中立基准)! ***\n")
+            elif k in (ord("w"), ord("W")):
+                # W: 视觉看门狗手动复位并重新使能 (Watchdog Manual Reset & Re-arm)
+                watchdog.reset()
+                anchor_r_hand[0] = None
+                smooth_v_base[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
+                last_wrist[0] = None
+                if arm_adapter.state() == "STOPPED":
+                    arm_adapter.arm(gravity_confirmed=True)
+                print("\n  *** 视觉看门狗已手动复位并重新使能 (Watchdog Reset & Re-armed)! ***\n")
             elif k in (ord("k"), ord("K")):
                 # K: 灵巧手张开全开校准
                 if hand_detected and 'pts' in locals() and 'p_frame' in locals():

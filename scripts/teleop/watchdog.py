@@ -39,16 +39,17 @@ class VisionWatchdog:
 
     def update(self, *, hand_present: bool, hand_confidence: float,
                depth_valid: bool, wrist_mm, now: float) -> tuple[WatchdogAction, float]:
-        """每帧调用. Returns (action, velocity_scale), scale∈[0,1]."""
+        """每帧调用. Returns (action, velocity_scale), scale∈[0,1]. 支持手部重现时自动复位恢复 (Auto-Recovery)."""
         vision_ok = (hand_present and hand_confidence >= self.conf_threshold
                      and depth_valid)
         if vision_ok:
-            # 腕跳变 → 立即 STOP (速度不连续)
+            # 腕跳变 → 立即 STOP 保护 1 帧，并同步更新腕点，下帧自动恢复平滑跟随
             if wrist_mm is not None and self._last_wrist is not None:
-                if float(np.linalg.norm(np.asarray(wrist_mm) - self._last_wrist)) \
-                        > self.wrist_jump_mm:
-                    self._loss_start = now
+                if float(np.linalg.norm(np.asarray(wrist_mm) - self._last_wrist)) > self.wrist_jump_mm:
+                    self._last_wrist = np.asarray(wrist_mm)
+                    self._loss_start = None
                     return WatchdogAction.STOP, 0.0
+
             self._last_wrist = np.asarray(wrist_mm) if wrist_mm is not None else None
             self._loss_start = None
             return WatchdogAction.OK, 1.0
@@ -69,7 +70,7 @@ class VisionWatchdog:
         return WatchdogAction.DECAY, scale
 
     def reset(self) -> None:
-        """重置看门狗丢失状态与历史记录 (离合重置/恢复时调用)."""
+        """重置看门狗丢失状态与历史记录 (离合重置/手动恢复时调用)."""
         self._loss_start = None
         self._last_wrist = None
 

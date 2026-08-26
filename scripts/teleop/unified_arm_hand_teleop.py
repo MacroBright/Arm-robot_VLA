@@ -336,8 +336,9 @@ def main():
                     mp_pts = tracker.landmark_xy(matched_hand, (h, w))
 
                     # ── 2. 机械臂手腕 6DOF 解算 ──
-                    palm_wrist_mm, palm_pts = build_palm_pts(matched_hand, depth, K, w)
-                    if palm_wrist_mm is not None:
+                    palm_pts = build_palm_pts(matched_hand, depth, K)
+                    if palm_pts is not None:
+                        palm_wrist_mm = palm_pts[0]
                         # 3D 腕部位置滤波与速度积分
                         filt_wrist = pts_filter(palm_wrist_mm)
                         if last_wrist[0] is not None and last_t[0] is not None:
@@ -361,50 +362,52 @@ def main():
                         last_t[0] = now
 
                         # 掌面倾角解算姿态摇杆角速度
-                        if palm_pts is not None and len(palm_pts) >= 4:
-                            p_wrist, p_idx, p_mid, p_pky = palm_pts[:4]
-                            v_mid = p_mid - p_wrist
-                            v_lat = p_pky - p_idx
-                            n_mid = np.linalg.norm(v_mid)
-                            n_lat = np.linalg.norm(v_lat)
-                            if n_mid > 1e-6 and n_lat > 1e-6:
-                                y_dir = v_mid / n_mid
-                                z_norm = np.cross(v_lat / n_lat, y_dir)
-                                nz = np.linalg.norm(z_norm)
-                                if nz > 1e-6:
-                                    z_norm /= nz
-                                    x_dir = np.cross(y_dir, z_norm)
-                                    r_raw = np.column_stack([x_dir, y_dir, z_norm])
-                                    r_filt = rot_filter(r_raw.reshape(-1)).reshape(3, 3)
-                                    u, _, vt = np.linalg.svd(r_filt)
-                                    r_palm = u @ vt
+                        p_wrist = palm_pts[0]
+                        p_idx = palm_pts[5]
+                        p_mid = palm_pts[9]
+                        p_pky = palm_pts[17]
+                        v_mid = p_mid - p_wrist
+                        v_lat = p_pky - p_idx
+                        n_mid = np.linalg.norm(v_mid)
+                        n_lat = np.linalg.norm(v_lat)
+                        if n_mid > 1e-6 and n_lat > 1e-6:
+                            y_dir = v_mid / n_mid
+                            z_norm = np.cross(v_lat / n_lat, y_dir)
+                            nz = np.linalg.norm(z_norm)
+                            if nz > 1e-6:
+                                z_norm /= nz
+                                x_dir = np.cross(y_dir, z_norm)
+                                r_raw = np.column_stack([x_dir, y_dir, z_norm])
+                                r_filt = rot_filter(r_raw.reshape(-1)).reshape(3, 3)
+                                u, _, vt = np.linalg.svd(r_filt)
+                                r_palm = u @ vt
 
-                                    # 模式角度解算
-                                    curr_g = gear_configs[current_gear[0]]
-                                    max_omega_val = curr_g["max_omega"]
-                                    deadband_deg = teleop_cfg.vision.deadband_angle_deg
+                                # 模式角度解算
+                                curr_g = gear_configs[current_gear[0]]
+                                max_omega_val = curr_g["max_omega"]
+                                deadband_deg = teleop_cfg.vision.deadband_angle_deg
 
-                                    # 虚拟摇杆速率响应
-                                    def _joy_rate(ang_deg: float) -> float:
-                                        abs_a = abs(ang_deg)
-                                        if abs_a <= deadband_deg:
-                                            return 0.0
-                                        ratio = min(1.0, (abs_a - deadband_deg) / max(1.0, 28.0 - deadband_deg))
-                                        return float(np.sign(ang_deg) * (ratio ** 1.4) * max_omega_val)
+                                # 虚拟摇杆速率响应
+                                def _joy_rate(ang_deg: float) -> float:
+                                    abs_a = abs(ang_deg)
+                                    if abs_a <= deadband_deg:
+                                        return 0.0
+                                    ratio = min(1.0, (abs_a - deadband_deg) / max(1.0, 28.0 - deadband_deg))
+                                    return float(np.sign(ang_deg) * (ratio ** 1.4) * max_omega_val)
 
-                                    roll_deg = float(np.degrees(np.arctan2(r_palm[2, 0], r_palm[2, 2])))
-                                    pitch_deg = float(np.degrees(np.arctan2(r_palm[2, 1], r_palm[2, 2])))
+                                roll_deg = float(np.degrees(np.arctan2(r_palm[2, 0], r_palm[2, 2])))
+                                pitch_deg = float(np.degrees(np.arctan2(r_palm[2, 1], r_palm[2, 2])))
 
-                                    w_cmd = np.zeros(3)
-                                    if current_mode[0] == MODE_ROLL:
-                                        w_cmd[0] = _joy_rate(roll_deg)
-                                    elif current_mode[0] == MODE_PITCH:
-                                        w_cmd[1] = _joy_rate(pitch_deg)
-                                    elif current_mode[0] == MODE_FULL:
-                                        w_cmd[0] = _joy_rate(roll_deg)
-                                        w_cmd[1] = _joy_rate(pitch_deg)
+                                w_cmd = np.zeros(3)
+                                if current_mode[0] == MODE_ROLL:
+                                    w_cmd[0] = _joy_rate(roll_deg)
+                                elif current_mode[0] == MODE_PITCH:
+                                    w_cmd[1] = _joy_rate(pitch_deg)
+                                elif current_mode[0] == MODE_FULL:
+                                    w_cmd[0] = _joy_rate(roll_deg)
+                                    w_cmd[1] = _joy_rate(pitch_deg)
 
-                                    smooth_w_base[0] = 0.70 * smooth_w_base[0] + 0.30 * (r_cam_to_base @ w_cmd)
+                                smooth_w_base[0] = 0.70 * smooth_w_base[0] + 0.30 * (r_cam_to_base @ w_cmd)
 
                     # ── 3. 灵巧手五指 16DOF 关节角解算 ──
                     if source_mode[0] == 1 and matched_hand.world_landmarks is not None:

@@ -100,90 +100,101 @@ def _draw_unified_dashboard(frame: np.ndarray,
                             fps: float,
                             no_drive_arm: bool,
                             no_drive_hand: bool) -> None:
-    """在一帧 960x720 画面上绘制机械臂 + 灵巧手一体化综合 HUD 监控看板."""
+    """在 1280x720 画面上绘制高透明度、无阴影重叠的机械臂 + 灵巧手一体化 HUD 监控看板."""
     h, w = frame.shape[:2]
     gear_info = gear_configs.get(arm_gear, gear_configs[2])
 
-    # 1. 顶部半透明全局状态栏 (Header Bar)
+    # 1. 统一构建高透明度玻璃态背景图层 (Single-pass Semi-transparent HUD Layer)
     overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (w, 52), (18, 18, 24), -1)
-    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
-    # 离合器标签
+    # 顶部状态栏底色
+    cv2.rectangle(overlay, (0, 0), (w, 46), (16, 18, 24), -1)
+
+    # 右侧子面板尺寸 (适应 1280x720 宽屏)
+    box_w = 330
+    rx0, ry0 = w - box_w - 14, 56
+    box_h = 160
+    cv2.rectangle(overlay, (rx0, ry0), (rx0 + box_w, ry0 + box_h), (16, 18, 24), -1)
+
+    hx0, hy0 = rx0, ry0 + box_h + 12
+    h_box_h = 280
+    cv2.rectangle(overlay, (hx0, hy0), (hx0 + box_w, hy0 + h_box_h), (16, 18, 24), -1)
+
+    # 底部快捷键提示栏底色
+    cv2.rectangle(overlay, (0, h - 30), (w, h), (16, 18, 24), -1)
+
+    # 高透明度混合: 35% 黑色遮罩 + 65% 相机原画 (用户手部清晰透见)
+    cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+
+    # 2. 绘制面板边框线 (保证与背景的清晰几何分割)
+    cv2.line(frame, (0, 46), (w, 46), (60, 70, 80), 1)
+    cv2.line(frame, (0, h - 30), (w, h - 30), (60, 70, 80), 1)
+    cv2.rectangle(frame, (rx0, ry0), (rx0 + box_w, ry0 + box_h), (0, 220, 255), 1)
+    cv2.rectangle(frame, (hx0, hy0), (hx0 + box_w, hy0 + h_box_h), (0, 255, 180), 1)
+
+    # 3. 顶部 Header 状态栏内容
     if clutch_active:
-        cv2.rectangle(frame, (10, 10), (135, 42), (0, 180, 80), -1)
-        cv2.putText(frame, "CLUTCH ON", (18, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.rectangle(frame, (10, 8), (145, 38), (0, 180, 80), -1)
+        cv2.putText(frame, "[SPACE] RUN", (18, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     else:
-        cv2.rectangle(frame, (10, 10), (135, 42), (40, 40, 180), -1)
-        cv2.putText(frame, "FREEZE (F)", (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        cv2.rectangle(frame, (10, 8), (145, 38), (40, 40, 200), -1)
+        cv2.putText(frame, "[SPACE] PAUSE", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
 
-    # 机械臂模式与档位
-    cv2.putText(frame, f"ARM: {MODE_NAMES[arm_mode]}", (150, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 220, 0), 2)
+    # 机械臂模式
+    cv2.putText(frame, f"ARM: {MODE_NAMES[arm_mode]}", (160, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+
+    # 档位徽标
     badge_col = gear_info.get("color", (0, 220, 255))
-    cv2.rectangle(frame, (430, 10), (510, 42), (30, 30, 30), -1)
-    cv2.rectangle(frame, (430, 10), (510, 42), badge_col, 2)
-    cv2.putText(frame, gear_info.get("badge", "MID"), (440, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.6, badge_col, 2)
+    cv2.rectangle(frame, (530, 8), (620, 38), (30, 30, 30), -1)
+    cv2.rectangle(frame, (530, 8), (620, 38), badge_col, 2)
+    cv2.putText(frame, f"[S] {gear_info.get('badge', 'MID')}", (538, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, badge_col, 2)
 
-    # 灵巧手状态与 3D 源
-    hand_col = (0, 255, 100) if "POWERED" in hand_state_str else (120, 120, 120)
-    cv2.putText(frame, f"HAND: {hand_state_str}", (530, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, hand_col, 2)
-    cv2.putText(frame, f"3D: {source_name}", (710, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 200, 255), 1)
-    cv2.putText(frame, f"{fps:3.0f}FPS", (w - 75, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2)
+    # 灵巧手状态
+    hand_col = (0, 255, 120) if "POWERED" in hand_state_str else (160, 160, 160)
+    cv2.putText(frame, f"HAND: {hand_state_str}", (640, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, hand_col, 2)
+    cv2.putText(frame, f"3D: {source_name}", (870, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 200, 255), 1)
+    cv2.putText(frame, f"{fps:3.0f} FPS", (w - 90, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 2)
 
-    # 2. 右侧机械臂 6 轴状态表 (Top-Right Subpanel)
-    box_w, box_h = 295, 140
-    rx0, ry0 = w - box_w - 12, 62
-    cv2.rectangle(overlay, (rx0, ry0), (rx0 + box_w, ry0 + box_h), (15, 15, 20), -1)
-    cv2.addWeighted(overlay, 0.70, frame, 0.30, 0, frame)
-    cv2.rectangle(frame, (rx0, ry0), (rx0 + box_w, ry0 + box_h), (80, 80, 80), 1)
-
+    # 4. 右上机械臂 6 轴状态表
     arm_title = "ARM (6-DOF ZDT) [SIM]" if no_drive_arm else "ARM (6-DOF ZDT) [REAL]"
-    cv2.putText(frame, arm_title, (rx0 + 8, ry0 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 255), 1)
+    cv2.putText(frame, arm_title, (rx0 + 10, ry0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 2)
 
     if joint_state is not None:
         for idx in range(6):
             col = idx % 2
             row = idx // 2
-            x = rx0 + 8 + col * 142
-            y = ry0 + 38 + row * 34
+            x = rx0 + 10 + col * 160
+            y = ry0 + 48 + row * 38
             q_val = float(joint_state.q[idx]) if idx < len(joint_state.q) else 0.0
             cur_val = float(joint_state.current_ma[idx]) if idx < len(joint_state.current_ma) else 0.0
-            cv2.putText(frame, f"J{idx+1}: {q_val:6.1f} deg", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (220, 220, 220), 1)
-            cv2.putText(frame, f"    {cur_val:4.0f} mA", (x, y + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (160, 200, 160), 1)
+            cv2.putText(frame, f"J{idx+1}: {q_val:6.1f} deg", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+            cv2.putText(frame, f"    {cur_val:4.0f} mA", (x, y + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 220, 160), 1)
 
-    # 3. 右侧灵巧手 16 关节弯曲条形图 (Bottom-Right Subpanel)
-    hx0, hy0 = w - box_w - 12, ry0 + box_h + 10
-    h_box_h = 240
-    cv2.rectangle(overlay, (hx0, hy0), (hx0 + box_w, hy0 + h_box_h), (15, 15, 20), -1)
-    cv2.addWeighted(overlay, 0.70, frame, 0.30, 0, frame)
-    cv2.rectangle(frame, (hx0, hy0), (hx0 + box_w, hy0 + h_box_h), (80, 80, 80), 1)
-
+    # 5. 右下灵巧手 16 关节弯曲条形图
     hand_title = "LEAP HAND (16-DOF) [SIM]" if no_drive_hand else "LEAP HAND (16-DOF) [REAL]"
-    cv2.putText(frame, hand_title, (hx0 + 8, hy0 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 180), 1)
+    cv2.putText(frame, hand_title, (hx0 + 10, hy0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 180), 2)
 
-    # 绘制 4 根手指 16 关节柱状图 (每指 4 个关节)
     for f_idx in range(4):
-        fy = hy0 + 38 + f_idx * 48
+        fy = hy0 + 46 + f_idx * 56
         f_name = FINGER_NAMES[f_idx]
         is_bent = hand_bent[f_idx] if hand_bent and f_idx < len(hand_bent) else False
-        f_col = (0, 230, 100) if is_bent else (180, 180, 180)
-        cv2.putText(frame, f"{f_name} {'[BENT]' if is_bent else ''}", (hx0 + 8, fy),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, f_col, 1)
+        f_col = (0, 255, 120) if is_bent else (200, 200, 200)
+        cv2.putText(frame, f"{f_name} {'[BENT]' if is_bent else ''}", (hx0 + 10, fy),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, f_col, 1)
 
         for j_idx in range(4):
             motor_id = f_idx * 4 + j_idx
             angle_val = float(hand_angles[motor_id]) if motor_id < len(hand_angles) else 0.0
-            # 柱状图条 (0.0 ~ 2.0 rad 归一化)
-            bar_w = int(np.clip(angle_val / 2.0, 0.0, 1.0) * 55)
-            bx = hx0 + 48 + j_idx * 60
-            by = fy + 6
-            cv2.rectangle(frame, (bx, by), (bx + 55, by + 10), (50, 50, 50), -1)
-            cv2.rectangle(frame, (bx, by), (bx + bar_w, by + 10), (0, 200, 255), -1)
-            cv2.putText(frame, f"M{motor_id}", (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (150, 150, 150), 1)
+            bar_w = int(np.clip(angle_val / 2.0, 0.0, 1.0) * 60)
+            bx = hx0 + 58 + j_idx * 68
+            by = fy + 8
+            cv2.rectangle(frame, (bx, by), (bx + 60, by + 10), (45, 50, 55), -1)
+            cv2.rectangle(frame, (bx, by), (bx + bar_w, by + 10), (0, 220, 255), -1)
+            cv2.putText(frame, f"M{motor_id}", (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (180, 180, 180), 1)
 
-    # 4. 底部操作提示栏
-    cv2.putText(frame, "SPACE:Calib/Power | S/TAB:Gear | M:Mode | R:Ready | H:Home | C:Clutch | Q:Quit",
-                (12, h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (180, 180, 180), 1)
+    # 6. 底部提示栏
+    cv2.putText(frame, "SPACE: Arm Pause/Resume | K/Z: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | R: Ready | H: Home | Q: Quit",
+                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1)
 
 
 def main():
@@ -291,12 +302,12 @@ def main():
 
     WIN_NAME = "TuinaDex — Arm & LeapHand Unified Visual Teleoperation"
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WIN_NAME, 960, 720)
+    cv2.resizeWindow(WIN_NAME, 1280, 720)
 
-    print("\n" + "=" * 65)
-    print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统已就绪")
-    print("  SPACE: 校准灵巧手/上电 | S/TAB: 换档 | M: 换模式 | C: 离合 | Q: 退出")
-    print("=" * 65 + "\n")
+    print("\n" + "=" * 70)
+    print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统 (1280x720 宽屏 HUD)")
+    print("  SPACE: 机械臂暂停/继续 | K/Z: 灵巧手校准 | P: 灵巧手上电 | S/TAB: 换档 | M: 模式 | Q: 退出")
+    print("=" * 70 + "\n")
 
     try:
         while True:
@@ -312,6 +323,8 @@ def main():
                 continue
 
             frame = cv2.flip(bgr, 1)  # 镜像
+            if frame.shape[1] != 1280 or frame.shape[0] != 720:
+                frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
             h, w = frame.shape[:2]
             results = tracker.detect(frame)
 
@@ -498,13 +511,21 @@ def main():
                 print("[系统] 用户请求退出，安全停机...")
                 break
             elif k == ord(" "):
-                # SPACE: 张开手全开校准 + 灵巧手延迟上电
-                if not args.no_drive_hand and not hand_adapter.is_connected():
-                    hand_adapter.connect()
+                # SPACE: 机械臂遥操暂停 / 恢复跟随 (Clutch Toggle)
+                clutch_active[0] = not clutch_active[0]
+                smooth_v_base[0] = np.zeros(3)
+                smooth_w_base[0] = np.zeros(3)
+                print(f"[机械臂遥操] {'已恢复跟随 (RUN)' if clutch_active[0] else '已暂停锁定 (PAUSE)'}")
+            elif k in (ord("k"), ord("K"), ord("z"), ord("Z")):
+                # K / Z: 灵巧手张开全开校准
                 if hand_detected and 'pts' in locals() and 'p_frame' in locals():
                     calibrator.calibrate_points(pts, frame=p_frame)
                     hand_angle_filter.reset()
                     print("\n  *** 灵巧手全开校准完成! ***\n")
+            elif k in (ord("p"), ord("P")):
+                # P: 灵巧手延迟上电
+                if not args.no_drive_hand and not hand_adapter.is_connected():
+                    hand_adapter.connect()
             elif k in (ord("s"), ord("S"), 9):  # TAB or S: 切换机械臂档位
                 current_gear[0] = (current_gear[0] % 3) + 1
                 smooth_v_base[0] = np.zeros(3)

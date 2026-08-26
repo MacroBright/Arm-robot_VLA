@@ -344,7 +344,8 @@ def main():
     # 6. 控制循环状态变量
     current_mode = [MODE_MAP.get(args.mode, MODE_ROLL)]
     current_gear = [teleop_cfg.gear.default_gear]
-    clutch_active = [True]
+    clutch_active = [True]          # 机械臂跟随离合器状态 (SPACE 键)
+    hand_clutch_active = [True]     # 灵巧手跟随离合器状态 (L 键)
     source_mode = [teleop_cfg.hand.source_mode]
 
     last_wrist = [None]
@@ -367,10 +368,10 @@ def main():
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN_NAME, 1280, 720)
 
-    print("\n" + "=" * 75)
+    print("\n" + "=" * 80)
     print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统 (全视野 1280x720 宽屏 HUD)")
-    print("  SPACE: 暂停/跟随 | Z: 姿态回零 | W: 看门狗复位 | K: 灵巧手校准 | P: 灵巧手上电 | S/TAB: 换档 | M: 模式 | Q: 退出")
-    print("=" * 75 + "\n")
+    print("  SPACE: 机械臂暂停/跟随 | L: 灵巧手暂停/跟随 | Z: 姿态回零 | W: 看门狗复位 | K: 灵巧手校准 | Q: 退出")
+    print("=" * 80 + "\n")
 
     try:
         while True:

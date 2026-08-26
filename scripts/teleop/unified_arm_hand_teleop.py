@@ -537,9 +537,8 @@ def main():
                         # 下发灵巧手舵机目标
                         hand_adapter.set_angles(hand_angles)
                     else:
-                        # 灵巧手处于暂停锁定状态 (维持全开姿态)
-                        hand_adapter.set_open()
-                        hand_angles = np.zeros(16, dtype=np.float64)
+                        # 灵巧手处于暂停锁定状态: 保持当前手势姿态完全不动 (Hold Current Posture)
+                        pass
 
             # ── 4. 手部丢失/遮挡平滑缓冲 (1~3 帧时域惯性缓冲，防止边缘偶发丢帧顿挫) ──
             if not hand_detected or palm_pts is None:
@@ -604,7 +603,7 @@ def main():
                 joint_state=cached_joint_state[0],
                 hand_angles=hand_angles,
                 hand_bent=hand_bent,
-                hand_state_str=("PAUSED (OPEN)" if not hand_clutch_active[0] else hand_adapter.state()) if hand_adapter.is_connected() else "UNPOWERED",
+                hand_state_str=("PAUSED (HOLD)" if not hand_clutch_active[0] else hand_adapter.state()) if hand_adapter.is_connected() else "UNPOWERED",
                 clutch_active=clutch_active[0],
                 arm_mode=current_mode[0],
                 arm_gear=current_gear[0],
@@ -630,12 +629,11 @@ def main():
                 smooth_w_base[0] = np.zeros(3)
                 print(f"[机械臂遥操] {'已恢复跟随 (RUN)' if clutch_active[0] else '已暂停锁定 (PAUSE)'}")
             elif k in (ord("l"), ord("L")):
-                # L: 灵巧手遥操暂停锁定 / 恢复跟随 (Hand Clutch Toggle)
+                # L: 灵巧手遥操暂停锁定当前姿态 / 恢复跟随 (Hand Clutch Toggle)
                 hand_clutch_active[0] = not hand_clutch_active[0]
-                if not hand_clutch_active[0]:
-                    hand_adapter.set_open()
+                if hand_clutch_active[0]:
                     hand_angle_filter.reset()
-                print(f"[灵巧手遥操] {'已恢复跟随 (RUN)' if hand_clutch_active[0] else '已暂停锁定全开姿态 (PAUSE/OPEN)'}")
+                print(f"[灵巧手遥操] {'已恢复跟随 (RUN)' if hand_clutch_active[0] else '已暂停锁定当前姿态 (PAUSE/HOLD)'}")
             elif k in (ord("z"), ord("Z")):
                 # Z: 机械臂手腕姿态回零校准 (将当前姿态设为 0° 中立基准)
                 anchor_r_hand[0] = None

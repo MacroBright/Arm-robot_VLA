@@ -253,8 +253,8 @@ def _draw_unified_dashboard(frame: np.ndarray,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
 
     # 8. 底部操作提示栏
-    cv2.putText(frame, "SPACE: Arm Pause/Resume | K/Z: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | R: Ready | H: Home | Q: Quit",
-                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1)
+    cv2.putText(frame, "SPACE: Arm Pause/Resume | Z: Wrist Zero | K: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | R: Ready | H: Home | Q: Quit",
+                (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
 
 
 def main():
@@ -364,10 +364,10 @@ def main():
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN_NAME, 1280, 720)
 
-    print("\n" + "=" * 70)
-    print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统 (1280x720 宽屏 HUD)")
-    print("  SPACE: 机械臂暂停/继续 | K/Z: 灵巧手校准 | P: 灵巧手上电 | S/TAB: 换档 | M: 模式 | Q: 退出")
-    print("=" * 70 + "\n")
+    print("\n" + "=" * 75)
+    print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统 (全视野 1280x720 宽屏 HUD)")
+    print("  SPACE: 暂停/跟随 | Z: 手腕姿态回零 | K: 灵巧手校准 | P: 灵巧手上电 | S/TAB: 换档 | M: 模式 | Q: 退出")
+    print("=" * 75 + "\n")
 
     try:
         while True:
@@ -382,7 +382,17 @@ def main():
                 time.sleep(0.01)
                 continue
 
-            frame = cv2.flip(bgr, 1)  # 镜像
+            # 同步镜像翻转 BGR 与 Depth，确保全局视野深度反投影完全对齐 (不再局限于中心区域)
+            frame = cv2.flip(bgr, 1)
+            depth_flipped = cv2.flip(depth, 1) if depth is not None else None
+
+            # 内参主点 cx 对应水平镜像变换: cx_mirrored = depth_w - cx
+            if K is not None and depth is not None:
+                fx, fy, cx, cy = K
+                K_mirrored = (fx, fy, float(depth.shape[1] - cx), cy)
+            else:
+                K_mirrored = K
+
             if frame.shape[1] != 1280 or frame.shape[0] != 720:
                 frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
             h, w = frame.shape[:2]
@@ -413,7 +423,7 @@ def main():
                     mp_pts = tracker.landmark_xy(matched_hand, (h, w))
 
                     # ── 2. 机械臂手腕 6DOF 解算 ──
-                    palm_pts = build_palm_pts(matched_hand, depth, K)
+                    palm_pts = build_palm_pts(matched_hand, depth_flipped, K_mirrored)
                     if palm_pts is not None:
                         palm_wrist_mm = palm_pts[0]
                         # 3D 腕部位置滤波与速度积分
@@ -456,8 +466,19 @@ def main():
                                 x_dir = np.cross(y_dir, z_norm)
                                 r_raw = np.column_stack([x_dir, y_dir, z_norm])
                                 r_filt = rot_filter(r_raw.reshape(-1)).reshape(3, 3)
-                                u, _, vt = np.linalg.svd(r_filt)
-                                r_palm = u @ vt
+                                u_mat, _, vt_mat = np.linalg.svd(r_filt)
+                                r_palm = u_mat @ vt_mat
+
+                                # 姿态回零与相对旋转基准 (Wrist Attitude Zero Calibration)
+                                if anchor_r_hand[0] is None or not clutch_active[0]:
+                                    anchor_r_hand[0] = r_palm.copy()
+                                    r_rel = np.eye(3)
+                                else:
+                                    r_rel = r_palm @ anchor_r_hand[0].T
+
+                                # 提取相对于中立基准的偏角 (度)
+                                roll_deg = float(np.degrees(np.arctan2(r_rel[2, 0], r_rel[2, 2])))
+                                pitch_deg = float(np.degrees(np.arctan2(r_rel[2, 1], r_rel[2, 2])))
 
                                 # 模式角度解算
                                 curr_g = gear_configs[current_gear[0]]
@@ -471,9 +492,6 @@ def main():
                                         return 0.0
                                     ratio = min(1.0, (abs_a - deadband_deg) / max(1.0, 28.0 - deadband_deg))
                                     return float(np.sign(ang_deg) * (ratio ** 1.4) * max_omega_val)
-
-                                roll_deg = float(np.degrees(np.arctan2(r_palm[2, 0], r_palm[2, 2])))
-                                pitch_deg = float(np.degrees(np.arctan2(r_palm[2, 1], r_palm[2, 2])))
 
                                 w_cmd = np.zeros(3)
                                 if current_mode[0] == MODE_ROLL:
@@ -585,30 +603,39 @@ def main():
             elif k == ord(" "):
                 # SPACE: 机械臂遥操暂停 / 恢复跟随 (Clutch Toggle)
                 clutch_active[0] = not clutch_active[0]
+                anchor_r_hand[0] = None
                 smooth_v_base[0] = np.zeros(3)
                 smooth_w_base[0] = np.zeros(3)
                 print(f"[机械臂遥操] {'已恢复跟随 (RUN)' if clutch_active[0] else '已暂停锁定 (PAUSE)'}")
-            elif k in (ord("k"), ord("K"), ord("z"), ord("Z")):
-                # K / Z: 灵巧手张开全开校准
+            elif k in (ord("z"), ord("Z")):
+                # Z: 机械臂手腕姿态回零校准 (将当前姿态设为 0° 中立基准)
+                anchor_r_hand[0] = None
+                smooth_w_base[0] = np.zeros(3)
+                print("\n  *** 机械臂手腕姿态已回零校准 (当前手势设为 0° 中立基准)! ***\n")
+            elif k in (ord("k"), ord("K")):
+                # K: 灵巧手张开全开校准
                 if hand_detected and 'pts' in locals() and 'p_frame' in locals():
                     calibrator.calibrate_points(pts, frame=p_frame)
                     hand_angle_filter.reset()
-                    print("\n  *** 灵巧手全开校准完成! ***\n")
+                    print("\n  *** 灵巧手五指全开校准完成! ***\n")
             elif k in (ord("p"), ord("P")):
                 # P: 灵巧手延迟上电
                 if not args.no_drive_hand and not hand_adapter.is_connected():
                     hand_adapter.connect()
             elif k in (ord("s"), ord("S"), 9):  # TAB or S: 切换机械臂档位
                 current_gear[0] = (current_gear[0] % 3) + 1
+                anchor_r_hand[0] = None
                 smooth_v_base[0] = np.zeros(3)
                 smooth_w_base[0] = np.zeros(3)
                 print(f"[档位切换] 机械臂灵敏度: {gear_configs[current_gear[0]]['name']}")
             elif k in (ord("m"), ord("M")):
                 current_mode[0] = (current_mode[0] % 4) + 1
+                anchor_r_hand[0] = None
                 smooth_w_base[0] = np.zeros(3)
                 print(f"[模式切换] 机械臂推拿模式: {MODE_NAMES[current_mode[0]]}")
             elif k in (ord("c"), ord("C"), ord("f"), ord("F")):
                 clutch_active[0] = not clutch_active[0]
+                anchor_r_hand[0] = None
                 smooth_v_base[0] = np.zeros(3)
                 smooth_w_base[0] = np.zeros(3)
                 print(f"[离合切换] 离合器状态: {'已激活 (CLUTCH ON)' if clutch_active[0] else '已冻结 (FREEZE)'}")

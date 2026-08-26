@@ -100,7 +100,7 @@ def _draw_unified_dashboard(frame: np.ndarray,
                             fps: float,
                             no_drive_arm: bool,
                             no_drive_hand: bool) -> None:
-    """在 1280x720 画面上绘制高透明度、无阴影重叠的机械臂 + 灵巧手一体化 HUD 监控看板."""
+    """在 1280x720 画面上绘制高透明度、无阴影重叠的机械臂 + 灵巧手一体化 HUD 监控看板 (含末端姿态/速度面板与手腕运动箭头)."""
     h, w = frame.shape[:2]
     gear_info = gear_configs.get(arm_gear, gear_configs[2])
 
@@ -110,12 +110,18 @@ def _draw_unified_dashboard(frame: np.ndarray,
     # 顶部状态栏底色
     cv2.rectangle(overlay, (0, 0), (w, 46), (16, 18, 24), -1)
 
-    # 右侧子面板尺寸 (适应 1280x720 宽屏)
+    # 左侧末端运动方向与姿态面板 (Motion & Attitude Panel)
+    lx0, ly0 = 14, 56
+    l_box_w, l_box_h = 390, 160
+    cv2.rectangle(overlay, (lx0, ly0), (lx0 + l_box_w, ly0 + l_box_h), (16, 18, 24), -1)
+
+    # 右侧机械臂状态面板
     box_w = 330
     rx0, ry0 = w - box_w - 14, 56
     box_h = 160
     cv2.rectangle(overlay, (rx0, ry0), (rx0 + box_w, ry0 + box_h), (16, 18, 24), -1)
 
+    # 右侧灵巧手舵机面板
     hx0, hy0 = rx0, ry0 + box_h + 12
     h_box_h = 280
     cv2.rectangle(overlay, (hx0, hy0), (hx0 + box_w, hy0 + h_box_h), (16, 18, 24), -1)
@@ -126,9 +132,10 @@ def _draw_unified_dashboard(frame: np.ndarray,
     # 高透明度混合: 35% 黑色遮罩 + 65% 相机原画 (用户手部清晰透见)
     cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
 
-    # 2. 绘制面板边框线 (保证与背景的清晰几何分割)
+    # 2. 绘制面板边框线
     cv2.line(frame, (0, 46), (w, 46), (60, 70, 80), 1)
     cv2.line(frame, (0, h - 30), (w, h - 30), (60, 70, 80), 1)
+    cv2.rectangle(frame, (lx0, ly0), (lx0 + l_box_w, ly0 + l_box_h), (0, 220, 255), 1)
     cv2.rectangle(frame, (rx0, ry0), (rx0 + box_w, ry0 + box_h), (0, 220, 255), 1)
     cv2.rectangle(frame, (hx0, hy0), (hx0 + box_w, hy0 + h_box_h), (0, 255, 180), 1)
 
@@ -155,7 +162,43 @@ def _draw_unified_dashboard(frame: np.ndarray,
     cv2.putText(frame, f"3D: {source_name}", (870, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 200, 255), 1)
     cv2.putText(frame, f"{fps:3.0f} FPS", (w - 90, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 2)
 
-    # 4. 右上机械臂 6 轴状态表
+    # 4. 左上末端运动方向与姿态面板 (Motion & Attitude Panel)
+    cv2.putText(frame, "MOTION & ATTITUDE", (lx0 + 10, ly0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 2)
+
+    vel = arm_out.get("v", np.zeros(3))
+    ang = arm_out.get("w", np.zeros(3))
+    if clutch_active:
+        x_dir = "左" if vel[0] > 4 else ("右" if vel[0] < -4 else "-")
+        y_dir = "后" if vel[1] > 4 else ("前" if vel[1] < -4 else "-")
+        z_dir = "上" if vel[2] > 4 else ("下" if vel[2] < -4 else "-")
+        spd_txt = f"v_lin: [X:{vel[0]:+4.0f}({x_dir}), Y:{vel[1]:+4.0f}({y_dir}), Z:{vel[2]:+4.0f}({z_dir})] mm/s"
+        cv2.putText(frame, spd_txt, (lx0 + 10, ly0 + 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 120), 1)
+
+        p_tag = "低头" if ang[0] < -0.04 else ("抬头" if ang[0] > 0.04 else "")
+        r_tag = "左滚" if ang[1] > 0.04 else ("右滚" if ang[1] < -0.04 else "")
+        tags = [t for t in (p_tag, r_tag) if t]
+        rot_tag = f" [{' '.join(tags)}]" if tags else (" [锁定]" if arm_mode == 1 else "")
+        ang_txt = f"w_ang: [Pitch:{ang[0]:+4.2f}, Roll:{ang[1]:+4.2f}] rad/s{rot_tag}"
+        cv2.putText(frame, ang_txt, (lx0 + 10, ly0 + 82), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 230, 0), 1)
+    else:
+        cv2.putText(frame, "v_lin: [ +0.0,  +0.0,  +0.0] mm/s [PAUSED]", (lx0 + 10, ly0 + 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 180, 255), 1)
+        cv2.putText(frame, "w_ang: [ +0.00,  +0.00] rad/s [PAUSED]", (lx0 + 10, ly0 + 82), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 180, 255), 1)
+
+    # 掌面虚拟摇杆角度 (Tilt Angles)
+    roll_deg = float(arm_out.get("d_roll_deg", 0.0))
+    pitch_deg = float(arm_out.get("d_pitch_deg", 0.0))
+    h_roll_tag = "左倾" if roll_deg > 4.0 else ("右倾" if roll_deg < -4.0 else "平")
+    h_pitch_tag = "下压" if pitch_deg < -4.0 else ("上抬" if pitch_deg > 4.0 else "平")
+    tilt_txt = f"Tilt: Roll:{roll_deg:+5.1f}°({h_roll_tag}) | Pitch:{pitch_deg:+5.1f}°({h_pitch_tag})"
+    cv2.putText(frame, tilt_txt, (lx0 + 10, ly0 + 112), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 230, 255), 1)
+
+    # 看门狗与安全状态
+    act_str = str(arm_out.get("action", "OK"))
+    act_col = (0, 255, 120) if act_str in ("OK", "MOVE") else ((0, 160, 255) if act_str == "DECAY" else (0, 0, 255))
+    status_txt = f"Watchdog: {act_str} | Scale: {float(arm_out.get('wd_scale', 1.0))*100:.0f}% | Gear: {gear_info.get('name', 'MID')}"
+    cv2.putText(frame, status_txt, (lx0 + 10, ly0 + 142), cv2.FONT_HERSHEY_SIMPLEX, 0.40, act_col, 1)
+
+    # 5. 右上机械臂 6 轴状态表
     arm_title = "ARM (6-DOF ZDT) [SIM]" if no_drive_arm else "ARM (6-DOF ZDT) [REAL]"
     cv2.putText(frame, arm_title, (rx0 + 10, ry0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 2)
 
@@ -170,7 +213,7 @@ def _draw_unified_dashboard(frame: np.ndarray,
             cv2.putText(frame, f"J{idx+1}: {q_val:6.1f} deg", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
             cv2.putText(frame, f"    {cur_val:4.0f} mA", (x, y + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 220, 160), 1)
 
-    # 5. 右下灵巧手 16 关节弯曲条形图
+    # 6. 右下灵巧手 16 关节弯曲条形图
     hand_title = "LEAP HAND (16-DOF) [SIM]" if no_drive_hand else "LEAP HAND (16-DOF) [REAL]"
     cv2.putText(frame, hand_title, (hx0 + 10, hy0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 180), 2)
 
@@ -192,7 +235,24 @@ def _draw_unified_dashboard(frame: np.ndarray,
             cv2.rectangle(frame, (bx, by), (bx + bar_w, by + 10), (0, 220, 255), -1)
             cv2.putText(frame, f"M{motor_id}", (bx, by - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (180, 180, 180), 1)
 
-    # 6. 底部提示栏
+    # 7. 手腕锚定标记与动态运动引导箭头 (Wrist Movement Arrow)
+    wrist_px = arm_out.get("wrist_px")
+    if wrist_px is not None:
+        u, v = int(wrist_px[0]), int(wrist_px[1])
+        cv2.circle(frame, (u, v), 8, (0, 255, 0), -1)
+        cv2.circle(frame, (u, v), 12, (255, 255, 255), 2)
+
+        v_mag = float(np.linalg.norm(vel))
+        if clutch_active and v_mag > 4.0:
+            # 根据真实平移速度方向绘制黄色导引箭头
+            dx = int(np.clip(vel[0] * 1.5, -80, 80))
+            dy = int(np.clip(vel[1] * 1.5, -80, 80))
+            if abs(dx) > 3 or abs(dy) > 3:
+                cv2.arrowedLine(frame, (u, v), (u + dx, v + dy), (0, 255, 255), 3, tipLength=0.25)
+                cv2.putText(frame, f"{v_mag:.0f} mm/s", (u + dx + 6, v + dy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
+
+    # 8. 底部操作提示栏
     cv2.putText(frame, "SPACE: Arm Pause/Resume | K/Z: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | R: Ready | H: Home | Q: Quit",
                 (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1)
 
@@ -332,6 +392,9 @@ def main():
             arm_action = "MOVE"
             scaled_v = np.zeros(3)
             scaled_w = np.zeros(3)
+            roll_deg = 0.0
+            pitch_deg = 0.0
+            wrist_px = None
 
             if results:
                 # 匹配物理操作手 (默认右手)
@@ -344,6 +407,7 @@ def main():
 
                 if matched_hand is not None:
                     hand_detected = True
+                    wrist_px = (int(matched_hand.landmarks[0].x * w), int(matched_hand.landmarks[0].y * h))
                     hand_adapter.reset_loss_state()
                     frame = tracker.draw_landmarks(frame, [matched_hand])
                     mp_pts = tracker.landmark_xy(matched_hand, (h, w))
@@ -488,7 +552,15 @@ def main():
 
             _draw_unified_dashboard(
                 frame=frame,
-                arm_out={"action": action.name, "v": scaled_v, "w": scaled_w},
+                arm_out={
+                    "action": action.name,
+                    "v": scaled_v,
+                    "w": scaled_w,
+                    "d_roll_deg": roll_deg,
+                    "d_pitch_deg": pitch_deg,
+                    "wrist_px": wrist_px,
+                    "wd_scale": wd_scale,
+                },
                 joint_state=cached_joint_state[0],
                 hand_angles=hand_angles,
                 hand_bent=hand_bent,

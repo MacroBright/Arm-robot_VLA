@@ -17,8 +17,8 @@ from scripts.teleop.unified_arm_hand_teleop import (
 
 
 def test_unified_dashboard_render():
-    """测试一体化 HUD 渲染逻辑不报错且正确在画面上绘图."""
-    dummy_frame = np.zeros((720, 960, 3), dtype=np.uint8)
+    """测试一体化 HUD 渲染逻辑不报错且正确在画面上绘制所有子面板与手腕导引箭头."""
+    dummy_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
     gear_configs = build_gear_configs(DEFAULT_TELEOP_CONFIG)
 
     joint_state = JointState(
@@ -33,7 +33,15 @@ def test_unified_dashboard_render():
 
     _draw_unified_dashboard(
         frame=dummy_frame,
-        arm_out={"action": "MOVE", "v": np.array([10.0, 0.0, 0.0]), "w": np.zeros(3)},
+        arm_out={
+            "action": "MOVE",
+            "v": np.array([25.0, -15.0, 10.0]),
+            "w": np.array([0.1, -0.2, 0.0]),
+            "d_roll_deg": 12.5,
+            "d_pitch_deg": -5.0,
+            "wrist_px": (640, 360),
+            "wd_scale": 1.0,
+        },
         joint_state=joint_state,
         hand_angles=hand_angles,
         hand_bent=hand_bent,
@@ -48,8 +56,9 @@ def test_unified_dashboard_render():
         no_drive_hand=True,
     )
 
-    # 画面不应全黑
+    # 画面不应全黑且手腕箭头处应有渲染像素
     assert dummy_frame.sum() > 0
+    assert dummy_frame[360, 640].sum() > 0
 
 
 def test_unified_arm_hand_coordination():

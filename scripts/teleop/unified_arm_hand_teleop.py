@@ -596,7 +596,7 @@ def main():
             else:
                 # 机械臂暂停离合态: 重置看门狗，下发零速度保持，不误触发急停
                 watchdog.reset()
-                action = WatchdogAction.WARN
+                action = WatchdogAction.OK
                 wd_scale = 1.0
                 scaled_v = np.zeros(3)
                 scaled_w = np.zeros(3)

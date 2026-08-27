@@ -249,7 +249,7 @@ def _draw_unified_dashboard(frame: np.ndarray,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 255), 1)
 
     # 8. 底部操作提示栏
-    cv2.putText(frame, "SPACE: Arm Pause | L: Hand Pause | Z: Wrist Zero | W: Watchdog Reset | K: Hand Calib | P: Hand Power | S/TAB: Gear | M: Mode | Q: Quit",
+    cv2.putText(frame, "SPACE: Arm Pause | R: Ready | H: Home | L: Hand Pause | Z: Zero | W: WD Reset | K: Calib | S/TAB: Gear | Q: Quit",
                 (12, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
 
 
@@ -279,8 +279,11 @@ def main():
     # 2. 机械臂适配器初始化
     joint_factors = teleop_cfg.joint_factor.as_list()
     if args.no_drive_arm:
-        arm_adapter = NoDriveArmAdapter()
-        print("[机械臂] 已启用 --no-drive-arm 空跑测试模式 (不发送 CAN 指令)")
+        arm_adapter = NoDriveArmAdapter(
+            ready_pose=teleop_cfg.pose.ready_pose_deg,
+            home_pose=teleop_cfg.pose.home_pose_deg,
+        )
+        print("[机械臂] 已启用 --no-drive-arm 空跑测试模式 (按 R 运动至准备姿态)")
     else:
         from lerobot_robot_massage.zdt.config import ZdtConfig
         from lerobot_robot_massage.zdt.controller import ZdtController
@@ -300,8 +303,7 @@ def main():
         arm_adapter.connect()
         arm_adapter.arm(gravity_confirmed=True)
         arm_adapter.enter_teleop()
-        arm_adapter.ready()
-        print(f"[机械臂] 6-DOF 电机已成功上电并到达准备姿态 (状态: {arm_adapter.state()})")
+        print(f"[机械臂] 6-DOF 电机已成功上电使能 (状态: {arm_adapter.state()}, 请按 R 键开始运动至准备姿态)")
 
     # 3. 灵巧手适配器与映射器初始化
     if args.no_drive_hand:
@@ -361,7 +363,7 @@ def main():
     smooth_w_base = [np.zeros(3)]
     loss_count = [0]
 
-    cached_joint_state = [None]
+    cached_joint_state = [arm_adapter.get_joint_state()]
     last_joint_poll = [0.0]
     hand_angles = np.zeros(16, dtype=np.float64)
     hand_bent = [False, False, False, False]
@@ -376,7 +378,7 @@ def main():
 
     print("\n" + "=" * 80)
     print("  TuinaDex 机械臂-灵巧手协同视觉遥操统一系统 (全视野 1280x720 宽屏 HUD)")
-    print("  SPACE: 机械臂暂停/跟随 | L: 灵巧手暂停/跟随 | Z: 姿态回零 | W: 看门狗复位 | K: 灵巧手校准 | Q: 退出")
+    print("  SPACE: 机械臂跟随 | R: 准备姿态(READY) | H: 初始复位(HOME) | L: 灵巧手锁定 | Z: 姿态回零 | K: 灵巧手校准 | Q: 退出")
     print("=" * 80 + "\n")
 
     try:
@@ -721,6 +723,7 @@ def main():
                     arm_adapter.re_arm(gravity_confirmed=True)
                 arm_adapter.ready()
                 hand_adapter.set_open()
+                cached_joint_state[0] = arm_adapter.get_joint_state()
             elif k in (ord("h"), ord("H"), ord("o"), ord("O")):
                 print("[姿态] 机械臂安全运动至上电初始姿态 (HOME)，灵巧手张开...")
                 clutch_active[0] = False
@@ -731,6 +734,7 @@ def main():
                     arm_adapter.re_arm(gravity_confirmed=True)
                 arm_adapter.home()
                 hand_adapter.set_open()
+                cached_joint_state[0] = arm_adapter.get_joint_state()
 
     except KeyboardInterrupt:
         print("\n[系统] 检测到 Ctrl+C 中断信号，正在优雅停机...")

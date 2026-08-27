@@ -63,9 +63,11 @@ class SimulationArmAdapter:
 class NoDriveArmAdapter:
     """空跑/只显示适配器 (no-drive): 未连接物理臂/CAN时用于视觉遥操与UI测试."""
 
-    def __init__(self):
+    def __init__(self, ready_pose: Optional[list] = None, home_pose: Optional[list] = None):
         self._phase = "NO_DRIVE"
-        self._q = [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
+        self.ready_pose = list(ready_pose) if ready_pose is not None else [0.0, 75.0, 55.0, 0.0, 130.0, 0.0]
+        self.home_pose = list(home_pose) if home_pose is not None else [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self._q = list(self.home_pose)
 
     def connect(self) -> None:
         self._phase = "SAFE_IDLE"
@@ -104,11 +106,11 @@ class NoDriveArmAdapter:
 
     def ready(self) -> None:
         self._phase = "TELEOP"
-        self._q = [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
+        self._q = list(self.ready_pose)
 
     def home(self) -> None:
         self._phase = "TELEOP"
-        self._q = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self._q = list(self.home_pose)
 
     def reset(self) -> None:
         self.ready()
@@ -170,7 +172,12 @@ class RealArmAdapter:
                 pass
 
     def get_joint_state(self) -> JointState:
-        q = list(self._cart._q_tracked) if hasattr(self._cart, "_q_tracked") and self._cart._q_tracked is not None else [0.0] * 6
+        if hasattr(self._cart, "_q_tracked") and self._cart._q_tracked is not None:
+            q = list(self._cart._q_tracked)
+        elif hasattr(self._ctrl, "_tracked_angles") and self._ctrl._tracked_angles is not None:
+            q = list(self._ctrl._tracked_angles)
+        else:
+            q = [0.0] * 6
         return JointState(q=tuple(q), dq=(0.0,) * 6,
                           current_ma=(0.0,) * 6,
                           flags=(0,) * 6,

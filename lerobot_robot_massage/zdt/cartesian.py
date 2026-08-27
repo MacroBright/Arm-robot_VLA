@@ -66,9 +66,11 @@ class CartesianController:
                  dt_max_factor: Optional[float] = None,
                  stale_cmd_max_s: Optional[float] = None,
                  joint_factors: Optional[list[float]] = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 use_tracked: bool = False):
         cfg = ctrl.config
         self.ctrl = ctrl
+        self.use_tracked = use_tracked
         self.joint_factors = np.asarray(
             joint_factors if joint_factors is not None
             else getattr(cfg, "joint_speed_factors", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
@@ -93,7 +95,7 @@ class CartesianController:
         self.lam_max = lam_max
         self.joint_limits = (joint_limits
                              if joint_limits is not None
-                             else list(FIRMWARE_JOINT_LIMITS))
+                             else list(getattr(cfg, "limits", FIRMWARE_JOINT_LIMITS)))
         self.ik_lambda = ik_lambda
         self.orient_weight = orient_weight
         self.max_dq_deg = max_dq_deg
@@ -114,9 +116,28 @@ class CartesianController:
 
     # ── 位置/位姿闭环 ─────────────────────────────────────
 
-    def _read_current_pose(self) -> tuple[np.ndarray, np.ndarray, list[float]]:
-        """读 0x36 真实角 (anchor) → source → FK. 返回 (p, R, q_anchor)."""
-        q_anchor = self.ctrl.read_real_angles(use_kb=True)
+    def _read_current_pose(self, use_tracked: Optional[bool] = None) -> tuple[np.ndarray, np.ndarray, list[float]]:
+        """获取当前末端位姿 (anchor) → source → FK. 返回 (p, R, q_anchor).
+
+        use_tracked:
+          - True: 使用 Controller._tracked_angles 软件命令积分 (0ms 延迟, 零 CAN 往返, 避免高频通信拥堵与超时);
+          - False: 通过 CAN 0x36 物理回读 (若异常则静默 fallback 至 _tracked_angles, 不抛出超时崩溃).
+        """
+        is_tracked = self.use_tracked if use_tracked is None else use_tracked
+        q_anchor = None
+        if is_tracked and hasattr(self.ctrl, "_tracked_angles") and self.ctrl._tracked_angles is not None:
+            q_anchor = list(self.ctrl._tracked_angles)
+
+        if q_anchor is None:
+            try:
+                q_anchor = self.ctrl.read_real_angles(use_kb=True)
+            except Exception as exc:
+                if hasattr(self.ctrl, "_tracked_angles") and self.ctrl._tracked_angles is not None:
+                    logger.warning("read_real_angles 异常 (%s), 自动回退至 tracked_angles", exc)
+                    q_anchor = list(self.ctrl._tracked_angles)
+                else:
+                    raise
+
         q_src = anchor_to_source(q_anchor)
         T = fk_mdh(q_src)
         return T[:3, 3].copy(), T[:3, :3].copy(), q_anchor
@@ -139,9 +160,9 @@ class CartesianController:
                     "target_xyz": None}
         return None
 
-    def get_current_pose(self) -> EEPose:
+    def get_current_pose(self, use_tracked: bool = False) -> EEPose:
         """当前末端位姿 (SO(3)) — Adapter/遥操公共接口 (P1-⑥), 不暴露内部 FK."""
-        p, R, _ = self._read_current_pose()
+        p, R, _ = self._read_current_pose(use_tracked=use_tracked)
         return EEPose(position=p, rotation=R)
 
     def step(self, vx: float, vy: float, vz: float,

@@ -431,6 +431,8 @@ def main():
     # 载入集中配置文件 (优先使用 YAML/JSON，若不存在使用内置默认数据类)
     teleop_cfg = TeleopConfig.load(args.config)
     GEAR_CONFIGS.update(build_gear_configs(teleop_cfg))
+    joint_limits = teleop_cfg.joint_limits.as_list()
+    joint_margin = teleop_cfg.joint_limits.joint_limit_margin_deg
 
     import numpy as np  # noqa: E402
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "Leap_Hand" / "python"))
@@ -466,7 +468,11 @@ def main():
 
     if args.no_drive:
         from arm_adapter import NoDriveArmAdapter  # noqa: E402
-        adapter = NoDriveArmAdapter()
+        adapter = NoDriveArmAdapter(
+            ready_pose=teleop_cfg.pose.ready_pose_deg,
+            home_pose=teleop_cfg.pose.home_pose_deg,
+            joint_limits=joint_limits,
+        )
         print("[模式] 已启用 --no-drive 空跑测试模式 (仅做视觉追踪与显示计算，不连接 CAN 总线)")
     else:
         from lerobot_robot_massage.zdt.config import ZdtConfig  # noqa: E402
@@ -475,12 +481,16 @@ def main():
                                        speed_rpm=teleop_cfg.motor.speed_rpm,
                                        position_acc=teleop_cfg.motor.position_acc,
                                        joint_speed_factors=joint_factors,
+                                       limits=joint_limits,
+                                       joint_limit_margin_deg=joint_margin,
                                        max_vel_mm_s=teleop_cfg.motor.max_vel_mm_s,
                                        max_ang_rad_s=teleop_cfg.motor.max_ang_rad_s,
                                        max_joint_vel_deg_s=teleop_cfg.motor.max_joint_vel_deg_s,
                                        max_joint_acc_deg_s2=teleop_cfg.motor.max_joint_acc_deg_s2))
         adapter = RealArmAdapter(ctrl, max_dq_deg=teleop_cfg.motor.max_dq_deg,
                                  joint_factors=joint_factors,
+                                 joint_limits=joint_limits,
+                                 joint_limit_margin_deg=joint_margin,
                                  ready_pose=teleop_cfg.pose.ready_pose_deg,
                                  home_pose=teleop_cfg.pose.home_pose_deg)
 

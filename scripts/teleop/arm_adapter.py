@@ -129,12 +129,23 @@ class RealArmAdapter:
     arm(gravity_confirmed) 由调用方显式调用 (重力关节 J2/J3 需确认).
     """
 
-    def __init__(self, ctrl, ready_pose: Optional[list] = None, home_pose: Optional[list] = None, **cart_kwargs):
+    def __init__(self, ctrl, ready_pose: Optional[list] = None, home_pose: Optional[list] = None,
+                 joint_limits: Optional[list] = None, joint_limit_margin_deg: Optional[float] = None,
+                 use_tracked: bool = True,
+                 **cart_kwargs):
         from lerobot_robot_massage.zdt.cartesian import CartesianController
         self._ctrl = ctrl
+        if joint_limits is not None:
+            self._ctrl.config.limits = [tuple(lim) for lim in joint_limits]
+            cart_kwargs["joint_limits"] = [tuple(lim) for lim in joint_limits]
+        if joint_limit_margin_deg is not None:
+            self._ctrl.config.joint_limit_margin_deg = float(joint_limit_margin_deg)
+            cart_kwargs["joint_limit_margin_deg"] = float(joint_limit_margin_deg)
+        cart_kwargs["use_tracked"] = use_tracked
         self._cart = CartesianController(ctrl, **cart_kwargs)
         self.ready_pose = ready_pose
         self.home_pose = home_pose
+        self.joint_limits = joint_limits
 
     def connect(self) -> None:
         self._ctrl.connect()                       # SAFE_IDLE, 不使能扭矩

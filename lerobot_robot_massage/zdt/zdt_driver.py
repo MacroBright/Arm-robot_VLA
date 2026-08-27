@@ -93,14 +93,18 @@ class ZdtDriver:
             body = body[:-1] + b"\x01"                     # 末字节 0x00→0x01 启用同步
         self._request(addr, body, expect_response=False)
 
-    def multi_sync(self) -> None:
+    def multi_sync(self, addrs: Optional[list[int]] = None) -> None:
         """广播多机同步运动 (00 FF 66 6B): 触发所有已带 snF=1 的 0xFD 命令同步启动.
 
-        说明书 §多机通讯及同步控制: 先对各电机发 0xFD(snF=1), 再发本广播,
-        收到广播后全部电机同时开始运动.
+        说明书 §多机通讯及同步控制: 先对各电机发 0xFD(snF=1), 再发本广播 (及逐轴直发),
+        确保即使驱动器开启了 CAN ID 硬件地址过滤也能 100% 触发同步启动.
         """
         body = bytes([0xFF, 0x66, CHECKSUM])
         self._request(0x00, body, expect_response=False)
+        if addrs:
+            for addr in addrs:
+                if addr != 0x00:
+                    self._request(addr, body, expect_response=False)
 
     def set_vel(self, addr: int, rpm: float, slope: float = 0.0) -> None:
         """速度模式. 斜率/速度字段 = RPM 直传 (手册 0xF6 0x05DC=1500RPM)."""

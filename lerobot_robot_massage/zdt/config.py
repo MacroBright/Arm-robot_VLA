@@ -108,11 +108,11 @@ CALIB_OFFSETS: list = [None] * 6
 class ZdtConfig:
     channel: str = "can0"
     bitrate: int = 500_000
-    timeout_s: float = 0.1
-    retries: int = 3
+    timeout_s: float = 0.03
+    retries: int = 1
     # 0xFD 位置命令电机速度 (RPM, 修复 ×10 bug 后直传).
     speed_rpm: float = 1800.0
-    watchdog_s: float = 0.5
+    watchdog_s: float = 1.5
     joint_addrs: list[int] = field(default_factory=lambda: list(JOINT_ADDRS))
     limits: list[tuple[float, float]] = field(
         default_factory=lambda: list(FIRMWARE_JOINT_LIMITS))

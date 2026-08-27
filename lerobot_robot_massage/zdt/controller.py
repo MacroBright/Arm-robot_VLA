@@ -496,7 +496,7 @@ class ZdtController:
             pending += 1
             self._tracked_angles[i] = real_angles[i] + delta
         if pending:
-            self._driver.multi_sync()
+            self._driver.multi_sync(addrs=self.config.joint_addrs)
             logger.info("%s → %s (%d 轴同步, %.1f RPM)", label, targets,
                         pending, speed_rpm)
         else:

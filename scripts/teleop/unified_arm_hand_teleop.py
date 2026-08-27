@@ -278,10 +278,14 @@ def main():
 
     # 2. 机械臂适配器初始化
     joint_factors = teleop_cfg.joint_factor.as_list()
+    joint_limits = teleop_cfg.joint_limits.as_list()
+    joint_margin = teleop_cfg.joint_limits.joint_limit_margin_deg
+
     if args.no_drive_arm:
         arm_adapter = NoDriveArmAdapter(
             ready_pose=teleop_cfg.pose.ready_pose_deg,
             home_pose=teleop_cfg.pose.home_pose_deg,
+            joint_limits=joint_limits,
         )
         print("[机械臂] 已启用 --no-drive-arm 空跑测试模式 (按 R 运动至准备姿态)")
     else:
@@ -291,12 +295,16 @@ def main():
                                        speed_rpm=teleop_cfg.motor.speed_rpm,
                                        position_acc=teleop_cfg.motor.position_acc,
                                        joint_speed_factors=joint_factors,
+                                       limits=joint_limits,
+                                       joint_limit_margin_deg=joint_margin,
                                        max_vel_mm_s=teleop_cfg.motor.max_vel_mm_s,
                                        max_ang_rad_s=teleop_cfg.motor.max_ang_rad_s,
                                        max_joint_vel_deg_s=teleop_cfg.motor.max_joint_vel_deg_s,
                                        max_joint_acc_deg_s2=teleop_cfg.motor.max_joint_acc_deg_s2))
         arm_adapter = RealArmAdapter(ctrl, max_dq_deg=teleop_cfg.motor.max_dq_deg,
                                      joint_factors=joint_factors,
+                                     joint_limits=joint_limits,
+                                     joint_limit_margin_deg=joint_margin,
                                      ready_pose=teleop_cfg.pose.ready_pose_deg,
                                      home_pose=teleop_cfg.pose.home_pose_deg)
         print(f"[机械臂] 正在连接 SocketCAN ({args.iface}) 并初始化 6 个电机...")

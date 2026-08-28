@@ -117,6 +117,7 @@ python scripts/teleop/handeye_calib.py
 
 进入主项目目录：
 ```bash
+conda activate leap_hand
 cd ~/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA
 ```
 

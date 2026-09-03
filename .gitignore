@@ -37,3 +37,4 @@ MUJOCO_LOG.TXT
 # Secrets
 .env
 *.token
+CLAUDE.md

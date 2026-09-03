@@ -66,7 +66,9 @@ SHM_NAME_EE = "mujoco_frame_ee"   # 末端相机共享内存
 SHM_HEADER_SIZE = 64
 
 DEFAULT_TCP_PORT = 5555
-SCENE_PATH = Path(__file__).resolve().parent / "mujoco_scene" / "scene.xml"
+_SIM_DIR = Path(__file__).resolve().parent
+SCENE_PATH = (_SIM_DIR / "scene.xml") if (_SIM_DIR / "scene.xml").exists() else (_SIM_DIR / "mujoco_scene" / "scene.xml")
+
 
 
 def log(msg: str) -> None:
@@ -812,10 +814,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MuJoCo 机械臂仿真 TCP 服务")
     parser.add_argument("-p", "--port", type=int, default=DEFAULT_TCP_PORT,
                         help=f"TCP 监听端口 (默认 {DEFAULT_TCP_PORT})")
-    parser.add_argument("--viewer", action="store_true",
-                        help="启动 3D viewer (Wayland 上可能不稳定)")
-    parser.add_argument("--no-viewer", action="store_true",
-                        help=argparse.SUPPRESS)  # 隐藏, 默认即为无头
+    parser.add_argument("--viewer", action="store_true", default=True,
+                        help="启动 3D 可视化窗口 (默认开启)")
+    parser.add_argument("--no-viewer", dest="viewer", action="store_false",
+                        help="以无头模式 (Headless) 运行，不显示 3D 窗口")
     parser.add_argument("--scene", type=str, default=str(SCENE_PATH),
                         help=f"MJCF 场景文件路径 (默认 {SCENE_PATH})")
     parser.add_argument("--ik", action="store_true",

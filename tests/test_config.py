@@ -49,7 +49,7 @@ def test_zdtconfig_defaults():
     assert c.bitrate == 500_000
     assert c.joint_addrs == JOINT_ADDRS
     assert c.limits == FIRMWARE_JOINT_LIMITS
-    assert c.speed_rpm == 1800.0 and c.watchdog_s == 1.5 and c.timeout_s == 0.03
+    assert c.speed_rpm == 1800.0 and c.watchdog_s == 1.5 and c.timeout_s == 0.10
 
 
 if __name__ == "__main__":

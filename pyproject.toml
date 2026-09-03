@@ -1,19 +1,74 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lerobot_robot_massage"
-version = "0.1.0"
-description = "LeRobot integration for STM32-mediated Emm_V5 CAN bus massage robotic arm"
+name = "arm_robot"
+version = "0.2.0"
+description = "6-DOF Robotic Arm Control, SocketCAN Driver & LeRobot Embodied AI System"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "ForgeMind Robotics & TuinaDex Team"}
+]
+keywords = [
+    "robotics",
+    "robotic-arm",
+    "6dof",
+    "socketcan",
+    "canbus",
+    "kinematics",
+    "cartesian-control",
+    "lerobot",
+    "vla",
+    "mujoco"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Robotics",
+]
 dependencies = [
-    "lerobot==0.4.4",
-    "pyserial",
     "numpy",
+    "python-can>=4.0.0",
+    "pyserial>=3.5",
     "opencv-python",
-    "python-can[socketcan]",
+    "pyyaml",
 ]
 
+[project.optional-dependencies]
+sim = [
+    "mujoco>=3.0.0",
+]
+lerobot = [
+    "lerobot>=0.4.0",
+    "torch>=2.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+arm-teleop = "arm_robot.cli.teleop:main"
+arm-control = "arm_robot.cli.control:main"
+arm-panel = "arm_robot.cli.panel:main"
+arm-bringup = "arm_robot.cli.bringup:main"
+arm-calib = "arm_robot.cli.calib:main"
+arm-sim = "arm_robot.cli.sim:main"
+arm-joystick = "arm_robot.cli.joystick:main"
+
 [tool.setuptools.packages.find]
-include = ["lerobot_robot_massage*"]
+where = ["src", "."]
+include = ["arm_robot*", "lerobot_robot_massage*"]
+
+[tool.setuptools.package-data]
+arm_robot = [
+    "py.typed",
+    "simulation/scene.xml",
+    "simulation/meshes/*.stl",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

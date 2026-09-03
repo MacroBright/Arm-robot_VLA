@@ -63,11 +63,15 @@ class SimulationArmAdapter:
 class NoDriveArmAdapter:
     """空跑/只显示适配器 (no-drive): 未连接物理臂/CAN时用于视觉遥操与UI测试."""
 
-    def __init__(self, ready_pose: Optional[list] = None, home_pose: Optional[list] = None):
+    def __init__(self, ready_pose: Optional[list] = None, home_pose: Optional[list] = None,
+                 joint_limits: Optional[list] = None, joint_margin: float = 2.0, **kwargs):
         self._phase = "NO_DRIVE"
         self.ready_pose = list(ready_pose) if ready_pose is not None else [0.0, 75.0, 55.0, 0.0, 130.0, 0.0]
         self.home_pose = list(home_pose) if home_pose is not None else [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.joint_limits = joint_limits
+        self.joint_margin = joint_margin
         self._q = list(self.home_pose)
+
 
     def connect(self) -> None:
         self._phase = "SAFE_IDLE"

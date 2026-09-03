@@ -57,31 +57,45 @@ PC (MassageRobot) ──[UART 115200bps]──> STM32F407 ──[CAN 1Mbps]─�
 ## 3. 环境搭建与多机无缝迁移
 
 ### 3.1 一键安装与配置
+
+推荐使用独立的 Python 3.10 环境（与灵巧手及大模型训练环境彻底解耦）：
+
+#### 方式 A：Conda 一键导入 (推荐)
 ```bash
 cd Arm-robot_VLA
-# 激活 smolvla 环境
-conda activate smolvla
-
-# 安装依赖并以 editable 模式注册 lerobot 机器人插件
-pip install -e lerobot_robot_massage
-pip install pygame mujoco opencv-python safetensors transformers
+conda env create -f environment.yml
+conda activate arm_robot
 ```
 
-### 3.2 跨机器快速迁移清单 (Migration)
-如需将项目从当前开发机迁移至新计算节点（如多卡训练机或实机控制工控机）：
-1. **安装系统依赖 (OpenGL / MuJoCo 渲染)**：
+#### 方式 B：手动创建与 pip 安装
+```bash
+conda create -n arm_robot python=3.10 -y
+conda activate arm_robot
+
+cd Arm-robot_VLA
+pip install -r requirements.txt
+pip install -e .
+```
+
+### 3.2 跨机器部署依赖清单 (Migration)
+在新机器（Ubuntu 22.04 / 24.04）上完整部署只需：
+1. **安装系统底层依赖 (SocketCAN 与 OpenGL 渲染)**：
    ```bash
-   sudo apt update && sudo apt install -y \
-       libgl1 libglx0 libegl1 libx11-6 libxrandr2 libxinerama1 libxi6 libxcursor1 \
-       can-utils xvfb
+   sudo apt update && sudo apt install -y can-utils libgl1 libglx0 libegl1
    ```
-2. **打包并传输核心资产**：
+2. **Git 克隆仓库**：
    ```bash
-   # 打包代码与模型权重
-   tar -czf arm_vla_deploy.tar.gz lerobot_robot_massage/ configs/ scripts/ outputs/
-   # 传至目标机并解压
-   scp arm_vla_deploy.tar.gz user@target-node:/home/user/
+   git clone https://github.com/MacroBright/Arm-robot_VLA.git
+   cd Arm-robot_VLA
+   conda env create -f environment.yml
+   conda activate arm_robot
    ```
+3. **验证部署成功**：
+   ```bash
+   # 运行全套单元测试 (秒级自检)
+   arm-robot test
+   ```
+
 
 ---
 

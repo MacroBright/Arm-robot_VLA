@@ -1,0 +1,22 @@
+# Arm-robot_VLA 运行依赖清单
+
+# 核心总线驱动与空间数学
+numpy>=1.24.0
+python-can>=4.0.0
+pyserial>=3.5
+opencv-python>=4.8.0
+pyyaml>=6.0
+
+# 交互输入与遥控
+pynput>=1.7.0
+pygame>=2.5.0
+
+# 物理仿真
+mujoco>=3.0.0
+
+# 视觉追踪与相机传感器 (RealSense D455 + MediaPipe)
+mediapipe>=0.10.0
+pyrealsense2>=2.54.0
+
+# 自动化测试
+pytest>=7.0.0

@@ -83,17 +83,21 @@
 
 ### 1. 创建独立环境并安装
 
-推荐使用独立的 Python 3.10 环境：
+项目推荐使用 Python 3.10 环境（支持 Conda 一键创建或 pip 手动安装）：
 
 ```bash
-# 创建并激活 conda 虚拟环境
-conda create -n arm_robot python=3.10 -y
+# 方式 A：Conda 一键创建与安装 (推荐)
+conda env create -f environment.yml
 conda activate arm_robot
 
-# 以可编辑模式安装本体
+# 方式 B：手动创建与 pip 安装
+conda create -n arm_robot python=3.10 -y
+conda activate arm_robot
 cd Arm-robot_VLA
+pip install -r requirements.txt
 pip install -e .
 ```
+
 
 ### 2. 配置 SocketCAN（连接真机时需要）
 

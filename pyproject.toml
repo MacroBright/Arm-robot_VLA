@@ -35,12 +35,14 @@ dependencies = [
     "pyserial>=3.5",
     "opencv-python",
     "pyyaml",
+    "pynput",
+    "pygame",
+    "mediapipe",
+    "pyrealsense2",
+    "mujoco>=3.0.0",
 ]
 
 [project.optional-dependencies]
-sim = [
-    "mujoco>=3.0.0",
-]
 lerobot = [
     "lerobot>=0.4.0",
     "torch>=2.0.0",
@@ -48,6 +50,10 @@ lerobot = [
 dev = [
     "pytest>=7.0.0",
 ]
+all = [
+    "arm_robot[lerobot,dev]",
+]
+
 
 [project.scripts]
 arm-robot = "arm_robot.cli.main:main"

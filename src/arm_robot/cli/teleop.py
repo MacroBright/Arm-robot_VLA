@@ -64,7 +64,11 @@ class RealArmTeleop:
         if self.clutch_active:
             self._clutch_on_time = now
             self.watchdog.reset()
+            print("[离合接合] 🟢 离合器已接合 (ACTIVE)，机械臂开始实时跟随手势！")
+        else:
+            print("[离合断开] 🟡 离合器已断开 (PAUSED)，机械臂暂停跟随。")
         return self.clutch_active
+
 
     def run_once(self, cmd_ts: float, now: float) -> dict:
         """跑一帧: 返回 {action, cmd, phase, clutch}. 调用方提供时间 (单调)."""
@@ -774,6 +778,12 @@ def main():
     WIN_NAME = "RealArmTeleop 6DOF"
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN_NAME, 960, 720)
+    print("\n" + "═" * 60)
+    print("👉 操作提示: 当前处于离合暂停保护状态 (PAUSED)")
+    print("   请在相机窗口聚焦时，按【空格键 (SPACE)】接合离合进入实时手势跟随！")
+    print("   按 1/2/3/4 切换推拿模式，按 Shift 切换速度档位，按 Q 退出。")
+    print("═" * 60 + "\n")
+
 
     cached_joint_state = [None]
     last_joint_poll = [0.0]

@@ -42,6 +42,15 @@ try:
 except ImportError:
     from remote_semantics import parse_remote_event
 
+try:
+    import mujoco
+    import mujoco.viewer
+    _HAS_MUJOCO = True
+except ImportError:
+    mujoco = None  # type: ignore[assignment]
+    _HAS_MUJOCO = False
+
+
 # ── 常量: 与固件参数对齐 ──────────────────────────────────────────────
 NUM_JOINTS = 6
 JOINT_NAMES_SIM = ["J1_base", "J2_shoulder", "J3_elbow", "J4_wrist_roll",
@@ -260,10 +269,16 @@ class MuJoCoArm:
 
             if freeze:
                 self.data.ctrl[:NUM_JOINTS] = 0.0
-            elif end_active and self.use_ik:
+            elif end_active:
                 # 解耦 IK: 位置用腕心(J1-J3), 姿态用末端旋转(J4/J5), J6 剥离
-                v_lin_e = np.array(end_raw[:3]) * REMOTE_LIN_GAIN     # m/s
-                w_ang_e = np.array(end_raw[3:6]) * REMOTE_ANG_GAIN    # rad/s
+                raw_v = np.array(end_raw[:3], dtype=float)
+                # 自动单位适配: 若输入模长 > 2.0 (如 mm/s 速度)，转为 m/s；否则按归一化系数乘增益
+                if np.linalg.norm(raw_v) > 2.0:
+                    v_lin_e = raw_v / 1000.0
+                else:
+                    v_lin_e = raw_v * REMOTE_LIN_GAIN
+                w_ang_e = np.array(end_raw[3:6], dtype=float) * REMOTE_ANG_GAIN    # rad/s
+
                 dq = np.zeros(NUM_JOINTS)
                 if np.any(np.abs(v_lin_e) > 1e-6):
                     # 位置: 腕心 Jacobian (腕部旋转不移动腕心 → 位置/姿态解耦)
@@ -279,9 +294,11 @@ class MuJoCoArm:
                     Jr = jac_rot[:, 3:5]         # J4/J5
                     JJT = Jr @ Jr.T + lam * lam * np.eye(3)
                     dq[3:5] = Jr.T @ np.linalg.solve(JJT, w_ang_e)
+                dq = np.clip(dq, -3.0, 3.0)      # 限幅保护，避免奇异区速度超调
                 for i in range(NUM_JOINTS):
                     self.data.ctrl[i] = (-PID_KV[i] * (qvel[i] - dq[i])
                                          + gravity[i])
+
             elif remote_active and self.use_ik:
                 # 位置 IK: J1-J3 驱动末端位置, J4/J5/J6 姿态通道直接关节速度
                 mujoco.mj_jacSite(self.model, self.data,
@@ -814,15 +831,12 @@ def status_log(arm: MuJoCoArm, connected: threading.Event,
 # ═══════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    global mujoco
-    try:
-        import mujoco
-        import mujoco.viewer
-    except ImportError:
+    if not _HAS_MUJOCO or mujoco is None:
         print("错误: 当前 Python 环境未安装 mujoco。", flush=True)
-        print("💡 提示: MuJoCo 物理引擎已安装在 'smolvla' 环境中，请切换环境运行:", flush=True)
-        print("    conda activate smolvla && arm-robot sim --viewer", flush=True)
+        print("💡 提示: 请在专属环境 arm_robot 中运行:", flush=True)
+        print("    conda activate arm_robot && arm-robot sim --viewer", flush=True)
         sys.exit(1)
+
 
     parser = argparse.ArgumentParser(description="MuJoCo 机械臂仿真 TCP 服务")
 
@@ -834,8 +848,11 @@ def main() -> None:
                         help="以无头模式 (Headless) 运行，不显示 3D 窗口")
     parser.add_argument("--scene", type=str, default=str(SCENE_PATH),
                         help=f"MJCF 场景文件路径 (默认 {SCENE_PATH})")
-    parser.add_argument("--ik", action="store_true",
-                        help="启用 Jacobian IK 笛卡尔控制 (末端位姿跟随摇杆)")
+    parser.add_argument("--ik", action="store_true", default=True,
+                        help="启用 Jacobian IK 笛卡尔控制 (默认开启)")
+    parser.add_argument("--no-ik", dest="ik", action="store_false",
+                        help="禁用 Jacobian IK 笛卡尔控制")
+
     parser.add_argument("--trail", type=int, default=0, metavar="N",
                         help="显示末端运动轨迹, N=保留点数 (如 --trail 500)")
     parser.add_argument("--no-camera", action="store_true",

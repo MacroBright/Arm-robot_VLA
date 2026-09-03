@@ -75,24 +75,29 @@
 
 ### 3.3 档位与功能按键
 - **`1` / `2` / `3`**：切换速度档位（1档: 10 mm/s, 2档: 30 mm/s, 3档: 60 mm/s）；
-- **`R`**：平缓运动至按摩预设准备姿态 `[0°, 75°, 55°, 0°, 130°, 0°]`；
-- **`H`**：平缓运动回垂直初始复位姿态 `[0°, 0°, 0°, 0°, 0°, 0°]`；
+- **`R`**：平缓运动至按摩预设准备姿态 (READY)；
+- **`H`**：平缓运动回垂直初始复位姿态 (HOME)；
+- **`P`**：终端实时打印当前 6 轴角度与末端笛卡尔位姿（调谐示教用）；
 - **`SPACE`**：急停并切断电机驱动力矩；
-- **`ESC`**：退出键盘遥控。
+- **`ESC` / `Q`**：退出键盘遥控。
 
 ---
 
-## 4. 实机 Bringup 与启动步骤
+## 4. 启动步骤 (统一 CLI 推荐)
 
 ```bash
-cd Arm-robot_VLA
+# 激活环境
+conda activate arm_robot
 
-# 1. 激活 SocketCAN 接口
-./scripts/bringup/can_setup.sh
+# 方式 A：控制真实机械臂
+sudo ip link set can0 type can bitrate 500000 && sudo ip link set can0 up
+arm-robot keyboard --iface can0
 
-# 2. 启动笛卡尔键盘控制
-python scripts/control/cartesian_keyboard.py --iface can0
+# 方式 B：控制 MuJoCo 仿真机械臂 (数字孪生)
+# (终端 1 先启动仿真: arm-robot sim --viewer)
+arm-robot keyboard --sim
 ```
+
 
 ---
 

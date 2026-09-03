@@ -42,9 +42,10 @@ MuJoCo 仿真环境完整模拟了 6-DOF 机械臂的物理动力学、关节限
 
 ## 2. 环境准备与依赖安装
 
+机械臂子项目在专属独立环境 **`arm_robot`** (Python 3.10) 中已预装全部 MuJoCo 依赖：
+
 ```bash
-conda activate smolvla
-pip install mujoco opencv-python pygame pyserial
+conda activate arm_robot
 ```
 
 验证安装：
@@ -58,25 +59,42 @@ python -c "import mujoco; print('MuJoCo 版本:', mujoco.__version__)"
 
 ### 3.1 启动带 GUI 交互窗口的仿真
 ```bash
-python scripts/simulation/mujoco_sim.py
+# 标准 CLI 启动 (默认加载 configs/home_pose.json 初始姿态)
+arm-robot sim --viewer
+
+# 自定义可配置 Home 初始姿态与 Ready 准备姿态
+arm-robot sim --viewer --home-pose 0,0,0,0,0,0 --ready-pose 0,75,55,0,130,0
 ```
 - 默认监听 TCP 端口 `5555`；
-- 可在 3D 窗口中自由旋转视点、查看关节坐标系与末端轨迹。
+- **刚性悬停特性**：松手或停止遥操时，原地锁定位姿，零回弹、零下坠；
+- 窗口中可自由旋转视点、查看关节坐标系与末端轨迹。
 
 ### 3.2 启动无头模式 (Headless / 服务器无显卡)
 ```bash
-xvfb-run python scripts/simulation/mujoco_sim.py --no-viewer
+xvfb-run arm-robot sim --no-viewer
 ```
 
 ---
 
-## 4. 手柄遥操作仿真 (Joystick Teleop)
+## 4. 仿真多模态控制 (键盘 / 视觉手势 / 手柄)
 
-在另一个终端启动手柄遥控程序，连接至仿真 TCP 端口：
+在另一个终端启动控制程序，无缝连接至数字孪生仿真 TCP 端口：
 
+### 4.1 键盘遥操仿真
 ```bash
-python scripts/control/joystick_control.py --port socket://localhost:5555
+arm-robot keyboard --sim
 ```
+
+### 4.2 视觉手势遥操数字孪生
+```bash
+arm-robot teleop --sim
+```
+
+### 4.3 游戏手柄遥控仿真
+```bash
+arm-robot joystick --sim
+```
+
 - 手柄左摇杆控制虚拟机械臂 XY 平移，LT/RT 控制升降，右摇杆控制姿态自旋；
 - 行为与真机完全一致。
 

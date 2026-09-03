@@ -17,12 +17,14 @@
 
 - [一、核心架构与分层设计](#一核心架构与分层设计)
 - [二、硬件规格与关节拓扑](#二硬件规格与关节拓扑)
-- [三、CLI 命令行工具速查](#三cli-命令行工具速查)
-- [四、🐍 Python SDK 快速上手](#四-python-sdk-快速上手)
-- [五、🤖 LeRobot 具身智能集成](#五-lerobot-具身智能集成)
-- [六、🎮 MuJoCo 物理仿真与数字孪生](#六-mujoco-物理仿真与数字孪生)
-- [七、🧪 自动化测试套件](#七-自动化测试套件)
-- [八、📚 详细技术文档中心](#八-详细技术文档中心)
+- [三、环境准备 (Conda Environment)](#三环境准备-conda-environment)
+- [四、CLI 命令行工具速查](#四cli-命令行工具速查)
+- [五、🐍 Python SDK 快速上手](#五-python-sdk-快速上手)
+- [六、🤖 LeRobot 具身智能集成](#六-lerobot-具身智能集成)
+- [七、🎮 MuJoCo 物理仿真与数字孪生](#七-mujoco-物理仿真与数字孪生)
+- [八、🧪 自动化测试套件](#八-自动化测试套件)
+- [九、📚 详细技术文档中心](#九-详细技术文档中心)
+
 
 ---
 
@@ -83,27 +85,44 @@ arm-robot --help
 
 ## 四、CLI 命令行工具速查
 
+本项目提供了统一的顶级控制台命令 **`arm-robot`**（以及各独立命令别名），在激活 `arm_robot` 环境后全局可用：
 
-本项目注册了 7 大标准控制台命令，在激活环境后即可全局直接调用：
-
-| CLI 命令 | 对应功能说明 | 典型运行指令示例 |
-|---|---|---|
-| **`arm-teleop`** | 6-DOF 视觉手势遥操主程序 | `arm-teleop --speed-scale 0.20 -y` |
-| **`arm-control`** | 交互式微调与电机调试控制台 | `arm-control --iface can0` |
-| **`arm-panel`** | ncurses 全屏 6 轴电机状态遥测仪表盘 | `arm-panel --iface can0` |
-| **`arm-bringup`** | 硬件快速拉起与极性自检自测 | `arm-bringup status` |
-| **`arm-calib`** | 30 秒手眼 SVD 正交矩阵标定向导 | `arm-calib --out configs/handeye_calib.json` |
-| **`arm-sim`** | 启动 MuJoCo 物理仿真 TCP 节点服务 | `arm-sim --viewer` |
-| **`arm-joystick`** | Xbox / PS 游戏手柄 6 轴空间遥控 | `arm-joystick -s 0.3` |
-
-### 快捷体验：无硬件纯视觉空跑
 ```bash
-arm-teleop --no-drive
+# 统一入口查看所有子命令
+arm-robot --help
+```
+
+| 子命令 / CLI 别名 | 对应功能说明 | 典型运行指令示例 |
+|---|---|---|
+| **`arm-robot teleop`** (`arm-teleop`) | 6-DOF 视觉手势遥操主程序（开机 PAUSED 待机，按 [R] 平稳前往 READY，按 [H] 回 HOME，按 [SPACE] 离合） | `arm-robot teleop --iface can0 -y` |
+| **`arm-robot control`** (`arm-control`, `arm-robot interactive`) | 交互式 6 轴电机底层协议、微步进与标定调试控制台（全面替代旧版 zdt_panel） | `arm-robot control --iface can0` |
+| **`arm-robot keyboard`** (`arm-keyboard`) | 键盘 W/A/S/D/Q/E 笛卡尔空间 6-DOF 遥控（支持真机与仿真，[H] 回初始，[R] 回准备，[P] 打印姿态） | `arm-robot keyboard --iface can0` |
+| **`arm-robot sim`** (`arm-sim`) | MuJoCo 物理动力学仿真与 TCP 服务（原地刚性悬停零回弹，支持 `--home-pose` 与 `--ready-pose`） | `arm-robot sim --viewer` |
+| **`arm-robot bringup`** (`arm-bringup`) | 硬件快速拉起与极性自检自测（支持全轴 status、单关节微步进 step） | `arm-robot bringup status --iface can0` |
+| **`arm-robot calib`** (`arm-calib`) | 30 秒手眼 SVD 正交矩阵标定向导（默认保存至 `configs/handeye_calib.json`） | `arm-robot calib` |
+| **`arm-robot joystick`** (`arm-joystick`) | Xbox / PS 游戏手柄 6 轴空间遥控 | `arm-robot joystick -s 0.3` |
+| **`arm-robot test`** | 一键运行全套自动化测试套件 (pytest) | `arm-robot test` |
+
+### 快捷体验示例：
+```bash
+# 1. 纯视觉手势空跑体验 (无需硬件)
+arm-robot teleop --no-drive
+
+# 2. 数字孪生手势遥控仿真 (启动仿真节点 + 视觉遥操数字孪生)
+arm-robot sim --viewer &
+arm-robot teleop --sim
+
+# 3. 键盘控制仿真机械臂
+arm-robot keyboard --sim
+
+# 4. 真机视觉推拿遥操闭环
+arm-robot teleop --iface can0 -y
 ```
 
 ---
 
-## 四、🐍 Python SDK 快速上手
+## 五、🐍 Python SDK 快速上手
+
 
 ```python
 from arm_robot import ZdtConfig, ZdtController
@@ -137,7 +156,7 @@ arm.disconnect()
 
 ---
 
-## 五、🤖 LeRobot 具身智能集成
+## 六、🤖 LeRobot 具身智能集成
 
 本包原生实现 HuggingFace LeRobot 的 `Robot` 基类，支持无缝使用官方工具链：
 
@@ -156,13 +175,13 @@ python -m lerobot.scripts.train \
 
 ---
 
-## 六、🎮 MuJoCo 物理仿真与数字孪生
+## 七、🎮 MuJoCo 物理仿真与数字孪生
 
 在没有物理机械臂时，可通过自带的 MuJoCo 模型进行 100% 动力学行为孪生仿真：
 
 ```bash
-# 启动 3D 渲染仿真 TCP 服务节点
-arm-sim --viewer --trail 300
+# 启动 3D 渲染仿真 TCP 服务节点 (支持 --home-pose 与 --ready-pose)
+arm-robot sim --viewer --trail 300
 ```
 - **MJCF 场景文件**：`src/arm_robot/simulation/scene.xml`
 - **高精度几何网格**：`src/arm_robot/simulation/meshes/*.stl`
@@ -170,7 +189,7 @@ arm-sim --viewer --trail 300
 
 ---
 
-## 七、🧪 自动化测试套件
+## 八、🧪 自动化测试套件
 
 本项目拥有 **285 个完备的单元测试**，覆盖 CAN 驱动编解码、MDH 正逆解、雅可比矩阵、奇异点阻尼、安全状态机与跨包兼容垫片：
 
@@ -182,7 +201,8 @@ pytest tests/
 
 ---
 
-## 八、📚 详细技术文档中心
+## 九、📚 详细技术文档中心
+
 
 更多底层细节请参阅 [docs/](docs/) 文档目录：
 - 📐 [软硬件分层架构设计 (ARCHITECTURE.md)](docs/ARCHITECTURE.md)

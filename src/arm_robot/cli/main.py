@@ -34,10 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("bringup", help="底层硬件快速拉起与极性自检", add_help=False)
     subparsers.add_parser("calib", help="30 秒手眼标定向导与 6DOF 实时沙盒", add_help=False)
     subparsers.add_parser("control", help="交互式 6 轴电机微调与调试控制台", add_help=False)
+    subparsers.add_parser("keyboard", help="键盘 W/A/S/D/Q/E 6-DOF 笛卡尔遥操 (支持 --sim 与真机)", add_help=False)
     subparsers.add_parser("joystick", help="Xbox / USB 游戏手柄 6 轴遥控", add_help=False)
     subparsers.add_parser("test", help="运行全套自动化测试套件 (pytest)", add_help=False)
 
     return parser
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -84,10 +86,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.argv = ["arm-control"] + sub_args
         return control_main() or 0
 
+    elif subcommand == "keyboard":
+        from arm_robot.cli.keyboard import main as keyboard_main
+        sys.argv = ["arm-keyboard"] + sub_args
+        return keyboard_main() or 0
+
     elif subcommand == "joystick":
         from arm_robot.cli.joystick import main as joystick_main
         sys.argv = ["arm-joystick"] + sub_args
         return joystick_main() or 0
+
 
     elif subcommand == "test":
         import pytest

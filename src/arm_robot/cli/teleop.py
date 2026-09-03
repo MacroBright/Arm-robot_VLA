@@ -415,11 +415,12 @@ def main():
                     help="摇杆模式最大角速度 (rad/s, 覆盖配置文件)")
     ap.add_argument("--deadband-angle", type=float, default=None,
                     help="摇杆模式倾斜死区角度 (deg, 覆盖配置文件)")
-    ap.add_argument("--joint-factors", default=None,
-                    help="各关节独立速度倍率因子 J1..J6 (逗号分隔, 默认读取配置文件)")
+    ap.add_argument("--sim", nargs="?", const="socket://localhost:5555", default=None,
+                    help="连接 MuJoCo 仿真 TCP 服务进行数字孪生手势遥操 (默认 socket://localhost:5555)")
     args = ap.parse_args()
-    if not args.gravity_confirm and not args.no_drive:
-        sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (空跑测试请加 --no-drive)")
+    if not args.gravity_confirm and not args.no_drive and not args.sim:
+        sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (仿真测试请加 --sim，空跑请加 --no-drive)")
+
 
     # 载入集中配置文件 (优先使用 YAML/JSON，若不存在使用内置默认数据类)
     teleop_cfg = TeleopConfig.load(args.config)
@@ -457,7 +458,14 @@ def main():
     else:
         joint_factors = teleop_cfg.joint_factor.as_list()
 
-    if args.no_drive:
+    if args.sim:
+        from arm_robot.teleop import ArmClient, SimulationArmAdapter  # noqa: E402
+        sim_url = args.sim if args.sim.startswith("socket://") else f"socket://localhost:{args.sim}"
+        client = ArmClient.open(sim_url)
+        adapter = SimulationArmAdapter(client)
+        adapter.connect()
+        print(f"[模式] 已连接 MuJoCo 物理仿真节点 ({sim_url})，进入数字孪生手势遥操！")
+    elif args.no_drive:
         from arm_robot.teleop import NoDriveArmAdapter  # noqa: E402
         adapter = NoDriveArmAdapter(
             ready_pose=teleop_cfg.pose.ready_pose_deg,
@@ -465,6 +473,7 @@ def main():
             joint_limits=joint_limits,
         )
         print("[模式] 已启用 --no-drive 空跑测试模式 (仅做视觉追踪与显示计算，不连接 CAN 总线)")
+
     else:
         from arm_robot.controller.config import ZdtConfig  # noqa: E402
         from arm_robot.controller.controller import ZdtController  # noqa: E402

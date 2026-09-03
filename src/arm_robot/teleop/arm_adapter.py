@@ -56,8 +56,18 @@ class SimulationArmAdapter:
     def e_stop(self) -> None:
         self._arm.e_stop()
 
+    def arm(self, gravity_confirmed: bool = False) -> None:
+        pass
+
+    def enter_teleop(self) -> None:
+        pass
+
+    def re_arm(self, gravity_confirmed: bool = True) -> None:
+        self._arm.remote_enable()
+
     def state(self) -> str:
         return "TELEOP"
+
 
 
 class NoDriveArmAdapter:

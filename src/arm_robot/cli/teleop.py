@@ -90,6 +90,7 @@ class RealArmTeleop:
             try:
                 if hasattr(self.adapter, "re_arm") and self.adapter.state() == "STOPPED":
                     self.adapter.re_arm(gravity_confirmed=True)
+                print("\n[姿态控制] 收到 [R] 键命令: 正在平稳运动至推拿准备姿态 (READY)...")
                 self.adapter.ready()
             except Exception as exc:  # noqa: BLE001
                 print(f"[READY] {exc}")
@@ -102,6 +103,7 @@ class RealArmTeleop:
             try:
                 if hasattr(self.adapter, "re_arm") and self.adapter.state() == "STOPPED":
                     self.adapter.re_arm(gravity_confirmed=True)
+                print("\n[姿态控制] 收到 [H] 键命令: 正在平稳运动至上电初始姿态 (HOME)...")
                 self.adapter.home()
             except Exception as exc:  # noqa: BLE001
                 print(f"[HOME] {exc}")
@@ -110,6 +112,7 @@ class RealArmTeleop:
             return {"action": "HOME", "cmd": CartesianCommand((0.0, 0.0, 0.0)),
                     "phase": self.adapter.state(),
                     "clutch": False}
+
         if key == 32:  # SPACE bar: Toggle clutch / Re-arm from E-stop
             if self.adapter.state() == "STOPPED":
                 if hasattr(self.adapter, "re_arm"):
@@ -783,16 +786,19 @@ def main():
     adapter.connect()
     adapter.arm(gravity_confirmed=True)
     adapter.enter_teleop()
-    adapter.ready()
+    # 遵循硬件安全原则：启动时不主动运动，保持当前静止待机；
+    # 操作员确认就绪后，在相机视窗中按下 [R] 键才平稳运动至推拿准备姿态 (READY)。
     recorder.start_episode()
     WIN_NAME = "RealArmTeleop 6DOF"
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN_NAME, 960, 720)
     print("\n" + "═" * 60)
-    print("👉 操作提示: 当前处于离合暂停保护状态 (PAUSED)")
-    print("   请在相机窗口聚焦时，按【空格键 (SPACE)】接合离合进入实时手势跟随！")
-    print("   按 1/2/3/4 切换推拿模式，按 Shift 切换速度档位，按 Q 退出。")
+    print("👉 操作提示: 当前处于安全待机保护状态 (PAUSED)")
+    print("   👉 步骤 1: 请在相机窗口聚焦时，按【R】键平稳运动至推拿准备姿态 (READY)！")
+    print("   👉 步骤 2: 按【空格键 (SPACE)】接合离合进入实时手势跟随！再次按【空格键】随时暂停悬停。")
+    print("   👉 快捷键: [H] 回上电初始姿态 | [1/2/3/4] 切换推拿模式 | [Shift] 切换速度档位 | [Q] 退出。")
     print("═" * 60 + "\n")
+
 
 
     cached_joint_state = [None]

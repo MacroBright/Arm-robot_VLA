@@ -67,7 +67,22 @@
 
 ---
 
-## 三、CLI 命令行工具速查
+## 三、环境准备 (Conda Environment)
+
+机械臂子项目拥有专属的独立运行环境 **`arm_robot`**（内置 MuJoCo 物理引擎、MediaPipe 视觉追踪、SocketCAN 驱动与全套依赖）：
+
+```bash
+# 激活机械臂专属环境
+conda activate arm_robot
+
+# 查看统一控制台
+arm-robot --help
+```
+
+---
+
+## 四、CLI 命令行工具速查
+
 
 本项目注册了 7 大标准控制台命令，在激活环境后即可全局直接调用：
 

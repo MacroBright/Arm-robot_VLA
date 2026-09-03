@@ -69,7 +69,9 @@ arm_robot = [
     "py.typed",
     "simulation/scene.xml",
     "simulation/meshes/*.stl",
+    "vision/models/*.task",
 ]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

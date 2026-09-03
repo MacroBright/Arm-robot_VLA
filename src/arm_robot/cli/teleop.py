@@ -13,16 +13,9 @@ import sys
 import time
 from pathlib import Path
 
-# ─── sys.path 注入 ───
-_CURR_DIR = Path(__file__).resolve().parent
-_ARM_ROOT = _CURR_DIR.parents[1]
-_LEAP_ROOT = _CURR_DIR.parents[2] / "Leap_Hand" / "python"
-for _p in (_CURR_DIR, _ARM_ROOT, _LEAP_ROOT):
-    if _p.exists() and str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import cv2
+import numpy as np
 
-import cv2  # noqa: E402
-import numpy as np  # noqa: E402
 
 from arm_robot.teleop import RealArmAdapter, NoDriveArmAdapter  # noqa: E402
 from arm_robot.kinematics.filter import OneEuroFilter  # noqa: E402
@@ -434,13 +427,11 @@ def main():
     joint_limits = teleop_cfg.joint_limits.as_list()
     joint_margin = teleop_cfg.joint_limits.joint_limit_margin_deg
 
-    import numpy as np  # noqa: E402
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "Leap_Hand" / "python"))
-    import cv2  # noqa: E402
-    from gesture_mapping.camera import open_realsense  # noqa: E402
-    from arm_robot.kinematics.filter import OneEuroFilter  # noqa: E402
-    from gesture_mapping.hand_tracker import HandTracker  # noqa: E402
-    from gesture_mapping.wrist_tracker import build_palm_pts  # noqa: E402
+    import numpy as np
+    import cv2
+    from arm_robot.vision import HandTracker, build_palm_pts, open_realsense
+    from arm_robot.kinematics.filter import OneEuroFilter
+
 
     cam = open_realsense()
     if cam is None:

@@ -81,24 +81,9 @@ def solve_handeye(cam_dirs, base_codes):
 def main():
     import cv2
 
-    _curr = Path(__file__).resolve()
-    for p_up in _curr.parents:
-        if (p_up / "Leap_Hand").exists():
-            for sub in ("src", "python"):
-                p_sub = p_up / "Leap_Hand" / sub
-                if p_sub.exists() and str(p_sub) not in sys.path:
-                    sys.path.insert(0, str(p_sub))
-            break
-
-    try:
-        from leap_hand.vision.camera import open_realsense
-        from leap_hand.vision.hand_tracker import HandTracker
-        from leap_hand.vision.wrist_tracker import build_palm_pts
-    except ImportError:
-        from gesture_mapping.camera import open_realsense
-        from gesture_mapping.hand_tracker import HandTracker
-        from gesture_mapping.wrist_tracker import build_palm_pts
+    from arm_robot.vision import HandTracker, build_palm_pts, open_realsense
     from arm_robot.kinematics.filter import OneEuroFilter
+
 
     ap = argparse.ArgumentParser(description="TuinaDex 6DOF 视觉手眼交互标定向导 & 实时沙盒")
     ap.add_argument("--out", default=str(Path(__file__).parent / "handeye_calib.json"),

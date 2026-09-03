@@ -814,7 +814,18 @@ def status_log(arm: MuJoCoArm, connected: threading.Event,
 # ═══════════════════════════════════════════════════════════════════════
 
 def main() -> None:
+    global mujoco
+    try:
+        import mujoco
+        import mujoco.viewer
+    except ImportError:
+        print("错误: 当前 Python 环境未安装 mujoco。", flush=True)
+        print("💡 提示: MuJoCo 物理引擎已安装在 'smolvla' 环境中，请切换环境运行:", flush=True)
+        print("    conda activate smolvla && arm-robot sim --viewer", flush=True)
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="MuJoCo 机械臂仿真 TCP 服务")
+
     parser.add_argument("-p", "--port", type=int, default=DEFAULT_TCP_PORT,
                         help=f"TCP 监听端口 (默认 {DEFAULT_TCP_PORT})")
     parser.add_argument("--viewer", action="store_true", default=True,
@@ -937,14 +948,8 @@ def main() -> None:
     log("仿真已停止。")
 
 
-# 延迟导入 mujoco (允许 --help 在未安装时仍可用)
-try:
-    import mujoco
-    import mujoco.viewer  # viewer 是延迟加载子模块, 需显式导入
-except ImportError:
-    print("错误: 未安装 mujoco。请运行: pip install mujoco", flush=True)
-    import sys
-    sys.exit(1)
+# 延迟导入由 main() 按需执行
+
 
 if __name__ == "__main__":
     main()

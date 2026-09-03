@@ -24,6 +24,11 @@ class ArmClient:
         self._ser.reset_input_buffer()
         self.ee_available = True   # 真机固件无 get_ee, 首次超时后置 False 不再轮询
 
+    @classmethod
+    def open(cls, port: str, baudrate: int = 115200, ser=None) -> "ArmClient":
+        return cls(port, baudrate=baudrate, ser=ser)
+
+
     # ── 命令 ──────────────────────────────────────────────
 
     def get_state(self) -> Tuple[list, list, list]:

@@ -415,9 +415,13 @@ def main():
                     help="摇杆模式最大角速度 (rad/s, 覆盖配置文件)")
     ap.add_argument("--deadband-angle", type=float, default=None,
                     help="摇杆模式倾斜死区角度 (deg, 覆盖配置文件)")
+    ap.add_argument("--joint-factors", default=None,
+                    help="各关节独立速度倍率因子 J1..J6 (逗号分隔, 默认读取配置文件)")
     ap.add_argument("--sim", nargs="?", const="socket://localhost:5555", default=None,
                     help="连接 MuJoCo 仿真 TCP 服务进行数字孪生手势遥操 (默认 socket://localhost:5555)")
     args = ap.parse_args()
+
+
     if not args.gravity_confirm and not args.no_drive and not args.sim:
         sys.exit("遥操前必须 -y/--gravity-confirm 确认重力关节 (J2/J3) (仿真测试请加 --sim，空跑请加 --no-drive)")
 

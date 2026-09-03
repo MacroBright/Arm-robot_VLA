@@ -5,21 +5,20 @@
 
 ---
 
-## 0. 定位：是什么 / 不是什么
+## 0. 定位：是什么
 
-**是什么**：直接读电机寄存器、发原始帧、做脉冲/刻度标定、测生产驱动路径（`ZdtController`）。
-贴协议、可学习、能标定。
+**功能定位**：直接读写电机寄存器、收发原始 CAN 报文、微步进控制、脉冲/刻度标定以及驱动器生产路径全功能交互调试控制台。
 
-**不是什么**：没有 `zdt_panel.py` 那套安全状态机（软限位 clamp、看门狗、重力关节确认）。
-所有运动命令**直接发出**，安全全靠物理急停 + `estop` 命令 + 自己注意。
+> 💡 **启动方式**：
+> 可以在任何目录使用统一 CLI：
+> ```bash
+> arm-robot control     # 或 arm-robot interactive / arm-control
+> ```
+> 也可以直接运行脚本：
+> ```bash
+> python scripts/bringup/zdt_interactive.py
+> ```
 
-> ⚠ **它是调试工具，不是安全面板。** 安全步进请用 [README_zdt_panel.md](README_zdt_panel.md)；底层操作与标定用本工具。
-
-| 能力 | zdt_interactive.py | zdt_panel.py |
-|------|--------------------|--------------|
-| 安全门禁 | ❌ 无 | ✅ SafetyMachine |
-| 单关节失能 | ✅ `dis` | ❌ 无（`D` 是全禁用）|
-| 原始帧 / 标定 | ✅ | ❌ |
 
 ---
 
@@ -43,11 +42,14 @@ cd ~/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA
 ### 1.3 启动命令
 
 ```bash
-~/win_office/conda/envs/smolvla/bin/python scripts/bringup/zdt_interactive.py \
-    [--iface can0]         # SocketCAN 接口 (默认 can0)
-    [--addr 0x02]          # 起始电机地址 (默认 0x02)
-    [--scheme pc|firmware] # 关节映射: pc=J1..J6→0x02..0x07 (默认) / firmware→0x01..0x06
+# 激活环境后直接使用统一 CLI (推荐)
+conda activate arm_robot
+arm-robot control [--iface can0] [--addr 0x02] [--scheme pc|firmware]
+
+# 或直接运行脚本
+python scripts/bringup/zdt_interactive.py [--iface can0] [--addr 0x02] [--scheme pc|firmware]
 ```
+
 
 启动后提示符形如 `[J2 0x03] > `，`J` 标签标明当前操作哪个关节。
 
@@ -443,9 +445,9 @@ send 0x03 FD00  # 向指定 ID 发原始帧
 
 ## 8. 参考
 
-- 安全面板（软限位 / 看门狗 / 急停演练）：[README_zdt_panel.md](README_zdt_panel.md)
 - CAN 接口管理：[can_setup.sh](can_setup.sh)
-- 驱动常量 / 限位 / `CALIB` / `CALIB_OFFSETS` 标定表：`lerobot_robot_massage/zdt/config.py`
-- 安全状态机：`lerobot_robot_massage/zdt/safety.py`
+- 驱动常量 / 限位 / `CALIB` / `CALIB_OFFSETS` 标定表：`src/arm_robot/controller/config.py`
+- 安全状态机：`src/arm_robot/controller/safety.py`
 - ZDT 说明书：`docs/SERIAL_COMMANDS.md`（0x36/0x0A 6D/0x93/0x9A 等命令参考）
 - 固件源码（0x36 符号位处理）：`zero-robotic-arm-master/2. Software/robot/Core/Src/robot.c:1045`
+

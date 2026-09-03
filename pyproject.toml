@@ -53,12 +53,14 @@ dev = [
 arm-robot = "arm_robot.cli.main:main"
 arm-teleop = "arm_robot.cli.teleop:main"
 arm-control = "arm_robot.cli.control:main"
-arm-panel = "arm_robot.cli.panel:main"
+arm-interactive = "arm_robot.cli.control:main"
+arm-panel = "arm_robot.cli.control:main"
 arm-bringup = "arm_robot.cli.bringup:main"
 arm-calib = "arm_robot.cli.calib:main"
 arm-sim = "arm_robot.cli.sim:main"
 arm-keyboard = "arm_robot.cli.keyboard:main"
 arm-joystick = "arm_robot.cli.joystick:main"
+
 
 
 

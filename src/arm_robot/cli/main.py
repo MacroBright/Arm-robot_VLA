@@ -30,10 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("teleop", help="6-DOF 视觉手势遥操主程序 (支持 --no-drive 空跑)", add_help=False)
     subparsers.add_parser("sim", help="MuJoCo 机械臂物理动力学仿真与 TCP 服务", add_help=False)
-    subparsers.add_parser("panel", help="6 轴电机状态遥测与寄存器查看面板", add_help=False)
+    subparsers.add_parser("control", help="交互式 6 轴电机底层协议与标定调试控制台 (zdt_interactive)", add_help=False)
+    subparsers.add_parser("interactive", help="交互式 6 轴电机底层协议与标定调试控制台 (zdt_interactive 别名)", add_help=False)
+    subparsers.add_parser("panel", help="交互式 6 轴电机底层协议与标定调试控制台 (zdt_interactive 别名)", add_help=False)
     subparsers.add_parser("bringup", help="底层硬件快速拉起与极性自检", add_help=False)
     subparsers.add_parser("calib", help="30 秒手眼标定向导与 6DOF 实时沙盒", add_help=False)
-    subparsers.add_parser("control", help="交互式 6 轴电机微调与调试控制台", add_help=False)
     subparsers.add_parser("keyboard", help="键盘 W/A/S/D/Q/E 6-DOF 笛卡尔遥操 (支持 --sim 与真机)", add_help=False)
     subparsers.add_parser("joystick", help="Xbox / USB 游戏手柄 6 轴遥控", add_help=False)
     subparsers.add_parser("test", help="运行全套自动化测试套件 (pytest)", add_help=False)
@@ -66,10 +67,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.argv = ["arm-sim"] + sub_args
         return sim_main() or 0
 
-    elif subcommand == "panel":
-        from arm_robot.cli.panel import main as panel_main
-        sys.argv = ["arm-panel"] + sub_args
-        return panel_main() or 0
+    elif subcommand in ("control", "interactive", "panel"):
+        from arm_robot.cli.control import main as control_main
+        sys.argv = ["arm-control"] + sub_args
+        return control_main() or 0
+
 
     elif subcommand == "bringup":
         from arm_robot.cli.bringup import main as bringup_main

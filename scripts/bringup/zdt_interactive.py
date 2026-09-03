@@ -15,11 +15,11 @@ import time
 
 import can
 
-from lerobot_robot_massage.zdt.config import (
+from arm_robot.controller.config import (
     CALIB, CHECKSUM, F_ENABLE, F_READ_CUR, F_READ_POS, F_STOP,
     FIRMWARE_JOINT_ADDRS, JOINT_ADDRS, DEFAULT_REDUCTION_RATIOS,
 )
-from lerobot_robot_massage.zdt.frames import (
+from arm_robot.driver.frames import (
     add_checksum, encode_frame, CanFrame, decode_pos4,
 )
 
@@ -362,10 +362,10 @@ def _make_controller(bus, addr, joint_addrs):
     限位同步裁剪为当前关节 (FIRMWARE_JOINT_LIMITS[slot]) — 否则单轴模式下
     set_joints_safe/check_limits_real 会用 limits[0]=J1, 对 J2+ 限位失效.
     """
-    from lerobot_robot_massage.zdt.config import (
+    from arm_robot.controller.config import (
         FIRMWARE_JOINT_LIMITS, ZdtConfig,
     )
-    from lerobot_robot_massage.zdt.controller import ZdtController
+    from arm_robot.controller.controller import ZdtController
     ratio = CURRENT_RATIO if CURRENT_RATIO is not None else _ratio_for_addr(addr, joint_addrs)
     slot = joint_addrs.index(addr) if addr in joint_addrs else 0
     cfg = ZdtConfig(
@@ -386,8 +386,8 @@ def _make_controller_all(bus, joint_addrs):
     ready/soft_reset 等全轴命令用. 速度/标定默认从 config 取 (ready 内部用
     READY_SPEED_RPM 覆盖, 不改全局).
     """
-    from lerobot_robot_massage.zdt.config import ZdtConfig
-    from lerobot_robot_massage.zdt.controller import ZdtController
+    from arm_robot.controller.config import ZdtConfig
+    from arm_robot.controller.controller import ZdtController
     cfg = ZdtConfig(
         channel="<interactive>",      # 不走 connect(), 仅占位
         timeout_s=0.3, retries=2,
@@ -444,7 +444,7 @@ def cmd_prod_ready(bus, joint_addrs):
     用整机控制器 + CALIB(k,b) 真实位置限位; 速度 READY_SPEED_RPM (仅本条, 快慢
     不影响全局 speed_rpm). 每轴 0xFD(snF=1) → multi_sync 广播同时启动.
     """
-    from lerobot_robot_massage.zdt.config import (
+    from arm_robot.controller.config import (
         CALIB, READY_POSE_DEG, READY_SPEED_RPM,
     )
     ctrl = _make_controller_all(bus, joint_addrs)
@@ -663,7 +663,7 @@ def cmd_anchor(bus, addr: int, joint_addrs: list[int], args: list[str]):
     offset = tmp_offset
     kb = tmp_kb
     if offset is None and kb is None:
-        from lerobot_robot_massage.zdt.config import CALIB_OFFSETS
+        from arm_robot.controller.config import CALIB_OFFSETS
         if CALIB_OFFSETS[slot] is not None:
             offset = CALIB_OFFSETS[slot]
         elif CALIB[slot] is not None:

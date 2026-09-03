@@ -85,12 +85,17 @@ def main():
     from arm_robot.kinematics.filter import OneEuroFilter
 
 
+    default_calib = Path(__file__).resolve().parents[3] / "configs" / "handeye_calib.json"
+    if not default_calib.exists():
+        default_calib = Path(__file__).parent / "handeye_calib.json"
+
     ap = argparse.ArgumentParser(description="TuinaDex 6DOF 视觉手眼交互标定向导 & 实时沙盒")
-    ap.add_argument("--out", default=str(Path(__file__).parent / "handeye_calib.json"),
-                    help="标定输出文件路径")
+    ap.add_argument("--out", default=str(default_calib),
+                    help="标定输出文件路径 (默认 configs/handeye_calib.json)")
     ap.add_argument("--sandbox", action="store_true",
                     help="直接加载现有标定矩阵，进入 6DOF 实时沙盒挥手测试")
     args = ap.parse_args()
+
 
     calib_out_path = Path(args.out)
     solved_R = None
@@ -462,7 +467,16 @@ def main():
                         print("=" * 60)
 
     finally:
+        try:
+            tracker.close()
+        except Exception:
+            pass
+        try:
+            cam.stop()
+        except Exception:
+            pass
         cv2.destroyAllWindows()
+
 
 
 if __name__ == "__main__":

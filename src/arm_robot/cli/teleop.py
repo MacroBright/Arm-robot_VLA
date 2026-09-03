@@ -398,17 +398,27 @@ def _draw_overlay(bgr, out: dict, hand_info: dict | None, clutch_active: bool,
 
 
 def main():
+    project_root = Path(__file__).resolve().parents[3]
+    default_calib = project_root / "configs" / "handeye_calib.json"
+    if not default_calib.exists():
+        default_calib = Path(__file__).parent / "handeye_calib.json"
+
+    default_cfg = project_root / "configs" / "teleop_config.yaml"
+    if not default_cfg.exists():
+        default_cfg = Path(__file__).parent / "teleop_config.yaml"
+
     ap = argparse.ArgumentParser(description="真机 6DOF 视觉遥操 (支持 --no-drive 空跑测试)")
     ap.add_argument("--iface", default="can0", help="SocketCAN 接口")
-    ap.add_argument("--calib", default=str(Path(__file__).parent / "handeye_calib.json"))
+    ap.add_argument("--calib", default=str(default_calib), help="手眼标定矩阵 JSON 路径")
     ap.add_argument("--out", default="datasets/teleop_real", help="录制输出目录")
     ap.add_argument("-y", "--gravity-confirm", action="store_true",
                     help="确认重力关节 J2/J3 二次确认 (真机驱动必须)")
     ap.add_argument("--no-drive", action="store_true", help="只做视觉与UI测试，不连接机械臂与CAN总线")
     ap.add_argument("--mode", choices=["knead", "roll", "pitch", "full"], default="knead",
                     help="推拿遥操姿态模式: knead(点按揉捏锁定), roll(滚法单轴Roll), pitch(俯仰单轴Pitch), full(全6DOF自由)")
-    ap.add_argument("--config", default=str(Path(__file__).parent / "teleop_config.yaml"),
-                    help="集中配置文件路径 (.yaml / .json, 默认 scripts/teleop/teleop_config.yaml)")
+    ap.add_argument("--config", default=str(default_cfg),
+                    help="集中配置文件路径 (.yaml / .json, 默认 configs/teleop_config.yaml)")
+
     ap.add_argument("--speed-scale", type=float, default=None,
                     help="全局平移线速度缩放比例 (覆盖配置文件)")
     ap.add_argument("--gain-xyz", type=float, default=None,

@@ -96,11 +96,27 @@ def main(argv: list[str] | None = None) -> int:
                         pressed.add(ev.key)
                     elif ev.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
                         gear = (gear + 1) % len(GEAR_MULTS)
+                    elif ev.key == pygame.K_h:
+                        if is_sim and sim_client:
+                            sim_client.home()
+                            print("[键盘遥操] 已发送: 一键返回初始姿态 (Home Pose)")
+                        elif cart:
+                            cart.ctrl.home()
+                            print("[键盘遥操] 已发送: 真机回初始姿态 (Home Pose)")
                     elif ev.key == pygame.K_r:
                         if is_sim and sim_client:
-                            sim_client.soft_reset()
+                            sim_client.ready()
+                            print("[键盘遥操] 已发送: 回推拿准备姿态 (Ready Pose)")
                         elif cart:
                             cart.ctrl.ready()
+                            print("[键盘遥操] 已发送: 真机回推拿准备姿态 (Ready Pose)")
+                    elif ev.key == pygame.K_p:
+                        if is_sim and sim_client:
+                            st = sim_client.get_state()
+                            if st:
+                                print(f"[机械臂当前姿态] J1-J6 (deg): {st[0]}")
+                        elif cart:
+                            print(f"[机械臂当前姿态] 真机 J1-J6 (deg): {cart.ctrl.cur_pos}")
                     elif ev.key == pygame.K_SPACE:
                         if is_sim and sim_client:
                             sim_client.e_stop()
@@ -144,10 +160,13 @@ def main(argv: list[str] | None = None) -> int:
                 "  • A / D : 向左 / 向右 (+Y / -Y)",
                 "  • Q / E : 抬升 / 下降 (+Z / -Z)",
                 "  • Shift : 切换速度档位 (慢 / 中 / 快)",
-                "  • R     : 复位回推拿就绪姿态 (Ready Pose)",
+                "  • H     : 一键返回初始姿态 (Home Pose)",
+                "  • R     : 复位回推拿准备姿态 (Ready Pose)",
+                "  • P     : 打印当前 6 轴角度 (方便调制 Home 姿态)",
                 "  • Space : 急停 (E-Stop)",
                 "  • Esc   : 退出",
             ]
+
             y = 180
             for h in hints:
                 screen.blit(f_hint.render(h, True, (180, 190, 205)), (30, y))

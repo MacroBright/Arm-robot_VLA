@@ -82,6 +82,65 @@ _SIM_DIR = Path(__file__).resolve().parent
 SCENE_PATH = (_SIM_DIR / "scene.xml") if (_SIM_DIR / "scene.xml").exists() else (_SIM_DIR / "mujoco_scene" / "scene.xml")
 
 
+def load_configured_pose(target: str = "home", cli_val: str | None = None) -> list[float]:
+    """读取配置的 Home 姿态或 Ready 姿态 (单位: 角度 deg)。"""
+    if cli_val:
+        if "," in cli_val:
+            vals = [float(x.strip()) for x in cli_val.split(",") if x.strip()]
+            if len(vals) >= NUM_JOINTS:
+                return vals[:NUM_JOINTS]
+        p = Path(cli_val)
+        if p.exists():
+            if p.suffix.lower() == ".json":
+                try:
+                    import json
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if "angles" in data and len(data["angles"]) >= NUM_JOINTS:
+                        return [float(x) for x in data["angles"][:NUM_JOINTS]]
+                except Exception as e:
+                    log(f"解析 {p} 失败: {e}")
+            elif p.suffix.lower() in (".yaml", ".yml"):
+                try:
+                    import yaml
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                    key = f"{target}_pose_deg"
+                    if "pose" in data and key in data["pose"]:
+                        return [float(x) for x in data["pose"][key][:NUM_JOINTS]]
+                except Exception as e:
+                    log(f"解析 {p} 失败: {e}")
+
+    # 默认自动探测当前工程目录下的配置文件
+    project_root = Path(__file__).resolve().parents[3]
+    candidate_json = project_root / "configs" / "home_pose.json"
+    candidate_yaml = project_root / "configs" / "teleop_config.yaml"
+
+    if target == "home" and candidate_json.exists():
+        try:
+            import json
+            with open(candidate_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if "angles" in data and len(data["angles"]) >= NUM_JOINTS:
+                return [float(x) for x in data["angles"][:NUM_JOINTS]]
+        except Exception:
+            pass
+
+    if candidate_yaml.exists():
+        try:
+            import yaml
+            with open(candidate_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            key = f"{target}_pose_deg"
+            if "pose" in data and key in data["pose"] and len(data["pose"][key]) >= NUM_JOINTS:
+                return [float(x) for x in data["pose"][key][:NUM_JOINTS]]
+        except Exception:
+            pass
+
+    if target == "ready":
+        return [0.0, 60.0, 50.0, 0.0, 120.0, 0.0]
+    return list(INIT_POSE_DEG)
+
 
 def log(msg: str) -> None:
     """带时间戳的控制台日志。"""
@@ -95,11 +154,21 @@ def log(msg: str) -> None:
 class MuJoCoArm:
     """6-DOF 机械臂的 MuJoCo 仿真模型 + 固件协议命令解析器。"""
 
-    def __init__(self, scene_path: str, use_ik: bool = False) -> None:
+    def __init__(self, scene_path: str, use_ik: bool = True,
+                 home_pose_deg: list[float] | None = None,
+                 ready_pose_deg: list[float] | None = None) -> None:
         # ── 加载 MuJoCo 模型 ──
+        if not _HAS_MUJOCO or mujoco is None:
+            raise RuntimeError("未安装 mujoco。请在专属环境 arm_robot 中运行。")
         self.model = mujoco.MjModel.from_xml_path(str(scene_path))
         self.data = mujoco.MjData(self.model)
         self.use_ik = use_ik
+
+        # 初始 Home 姿态与 Ready 姿态 (角度 deg 与 弧度 rad)
+        self.home_pose_deg = list(home_pose_deg or load_configured_pose("home"))[:NUM_JOINTS]
+        self.home_pose_rad = [math.radians(a) for a in self.home_pose_deg]
+        self.ready_pose_deg = list(ready_pose_deg or load_configured_pose("ready"))[:NUM_JOINTS]
+        self.ready_pose_rad = [math.radians(a) for a in self.ready_pose_deg]
 
         # 预取末端 site ID (Jacobian IK 用)
         self._ee_site_id = mujoco.mj_name2id(
@@ -107,15 +176,11 @@ class MuJoCoArm:
         self._wrist_site_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_SITE, "wrist_site")
 
-        # 初始化到 soft_reset 姿态
-        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY,
-                                    "soft_reset")
-        if key_id >= 0:
-            mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
-        else:
-            self.data.qpos[:NUM_JOINTS] = INIT_POSE_RAD
-            self.data.ctrl[:NUM_JOINTS] = INIT_POSE_RAD
-            mujoco.mj_forward(self.model, self.data)
+        # 初始化到 Home 姿态
+        self.data.qpos[:NUM_JOINTS] = self.home_pose_rad
+        self.data.ctrl[:NUM_JOINTS] = self.home_pose_rad
+        self.data.qvel[:NUM_JOINTS] = 0.0
+        mujoco.mj_forward(self.model, self.data)
 
         # ── 状态 ──
         self._lock = threading.Lock()
@@ -124,8 +189,10 @@ class MuJoCoArm:
         self.control_mode = "idle"       # idle | cartesian | joint
         self.active_joint = 0            # 逐关节模式下当前关节 (0-indexed)
         self._freeze_ctrl = False     # set_torque 0 时冻结
-        self._target_pos = list(INIT_POSE_RAD)  # set_joints 目标 (rad)
-        self._was_remote_active = False         # remote 下降沿: 松手时锁定当前位置
+        self._target_pos = list(self.home_pose_rad)  # set_joints 目标 (rad)
+        self._was_remote_active = False
+        self._was_any_active = False
+
 
         # remote_event 状态 (7 参: p0-p5 + p6→J4)
         self._remote_vals = [0.0] * 7
@@ -223,10 +290,14 @@ class MuJoCoArm:
             raw = list(self._remote_vals) if remote_active else [0.0] * 7
             end_raw = list(self._end_vals) if end_active else [0.0] * 6
             self._ema_initialized = self._ema_initialized and remote_active
-            # remote 下降沿: 松手时锁定当前位置 (不下坠)
-            if self._was_remote_active and not remote_active:
+            # 遥操活跃标志 (无论手势 end_event 还是手柄 remote_event)
+            any_active = remote_active or end_active
+            # 遥操运动中持续更新或松手瞬间锁定当前实际角度 (悬停不下坠不弹回)
+            if any_active or (self._was_any_active and not any_active):
                 self._target_pos[:] = self.data.qpos[:NUM_JOINTS].copy()
+            self._was_any_active = any_active
             self._was_remote_active = remote_active
+
 
             # 保存 set_joints 设置的目标角度 (rad)
             ctrl_targets = self._target_pos.copy()
@@ -336,7 +407,10 @@ class MuJoCoArm:
 
         # (4) 更新线程安全状态缓存 (TCP 线程从此读取, 避免 data race)
         with self._lock:
+            if any_active:
+                self._target_pos[:] = self.data.qpos[:NUM_JOINTS].copy()
             self._cached_qpos = self.data.qpos[:NUM_JOINTS].copy()
+
             self._cached_qvel = self.data.qvel[:NUM_JOINTS].copy()
             self._cached_loads = self.data.qfrc_actuator[:NUM_JOINTS].copy()
             self._cached_ee_pos = self.data.site_xpos[self._ee_site_id].copy()
@@ -390,8 +464,13 @@ class MuJoCoArm:
             return self._cmd_rel_rotate(parts[1:])
         if cmd == "soft_reset":
             return self._cmd_soft_reset()
+        if cmd == "home":
+            return self._cmd_home()
+        if cmd == "ready":
+            return self._cmd_ready()
         if cmd == "hard_reset":
             return self._cmd_hard_reset()
+
         if cmd == "auto":
             return self._cmd_auto(parts[1:])
         if cmd == "get_hub":
@@ -455,13 +534,40 @@ class MuJoCoArm:
         log("!! e_stop → 全部关节停止, 退出远程模式")
         return ["ESTOP"]
 
+    def _cmd_home(self) -> list[str]:
+        with self._lock:
+            self._target_pos[:] = self.home_pose_rad
+            self.data.qpos[:NUM_JOINTS] = self.home_pose_rad
+            self.data.ctrl[:NUM_JOINTS] = self.home_pose_rad
+            self.data.qvel[:NUM_JOINTS] = 0.0
+            mujoco.mj_forward(self.model, self.data)
+            self._freeze_ctrl = False
+            self._remote_vals = [0.0] * 7
+            self._end_vals = [0.0] * 6
+        log(f"home → 回初始姿态: {np.round(self.home_pose_deg, 1)}")
+        return ["OK"]
+
+    def _cmd_ready(self) -> list[str]:
+        with self._lock:
+            self._target_pos[:] = self.ready_pose_rad
+            self.data.qpos[:NUM_JOINTS] = self.ready_pose_rad
+            self.data.ctrl[:NUM_JOINTS] = self.ready_pose_rad
+            self.data.qvel[:NUM_JOINTS] = 0.0
+            mujoco.mj_forward(self.model, self.data)
+            self._freeze_ctrl = False
+            self._remote_vals = [0.0] * 7
+            self._end_vals = [0.0] * 6
+        log(f"ready → 回准备姿态: {np.round(self.ready_pose_deg, 1)}")
+        return ["OK"]
+
     def _cmd_remote_enable(self) -> list[str]:
         with self._lock:
             self.remote_enabled = True
             self._was_remote_active = False
-            self._target_pos[:] = INIT_POSE_RAD
+            self._was_any_active = False
+            self._target_pos[:] = self.data.qpos[:NUM_JOINTS].copy()
             self.control_mode = "cartesian"  # 默认笛卡尔模式
-        log("remote_enable → 远程模式开启 (soft_reset)")
+        log("remote_enable → 远程模式开启")
         return []
 
     def _cmd_remote_disable(self) -> list[str]:
@@ -471,9 +577,11 @@ class MuJoCoArm:
             self._end_vals = [0.0] * 6
             self._end_stamp = 0.0
             self._was_remote_active = False
-            self._target_pos[:] = INIT_POSE_RAD
-        log("remote_disable → 远程模式关闭 (soft_reset)")
+            self._was_any_active = False
+            self._target_pos[:] = self.data.qpos[:NUM_JOINTS].copy()
+        log("remote_disable → 远程模式关闭")
         return []
+
 
     def _cmd_zero(self) -> list[str]:
         with self._lock:
@@ -556,17 +664,8 @@ class MuJoCoArm:
         return []
 
     def _cmd_soft_reset(self) -> list[str]:
-        with self._lock:
-            self._target_pos[:] = INIT_POSE_RAD
-            self._freeze_ctrl = False
-            self._remote_vals = [0.0] * 7      # 清空 remote 命令, 立即退出 remote 窗口
-            self._remote_stamp = 0.0           # 阻止"松手锁位"覆盖 INIT 目标
-            self._end_vals = [0.0] * 6         # 清空 end_event, 避免残留驱动
-            self._end_stamp = 0.0
-            self._was_remote_active = False
-            self.control_mode = "joint"
-        log("soft_reset → 回预设初始角度")
-        return []
+        return self._cmd_home()
+
 
     def _cmd_hard_reset(self) -> list[str]:
         with self._lock:
@@ -852,6 +951,10 @@ def main() -> None:
                         help="启用 Jacobian IK 笛卡尔控制 (默认开启)")
     parser.add_argument("--no-ik", dest="ik", action="store_false",
                         help="禁用 Jacobian IK 笛卡尔控制")
+    parser.add_argument("--home-pose", type=str, default=None,
+                        help="初始/Home 关节姿态 (角度 deg, 逗号分隔如 90,0,90,-180,0,0 或 JSON 文件路径)")
+    parser.add_argument("--ready-pose", type=str, default=None,
+                        help="推拿准备姿态 (角度 deg, 逗号分隔或 YAML 文件路径)")
 
     parser.add_argument("--trail", type=int, default=0, metavar="N",
                         help="显示末端运动轨迹, N=保留点数 (如 --trail 500)")
@@ -870,7 +973,13 @@ def main() -> None:
 
     # ── 加载模型 ──
     log(f"加载场景: {scene_path}")
-    arm = MuJoCoArm(str(scene_path), use_ik=args.ik)
+    home_deg = load_configured_pose("home", args.home_pose)
+    ready_deg = load_configured_pose("ready", args.ready_pose)
+    log(f"机械臂 Home 初始姿态 (J1-J6 deg): {np.round(home_deg, 1)}")
+    log(f"机械臂 Ready 准备姿态 (J1-J6 deg): {np.round(ready_deg, 1)}")
+    arm = MuJoCoArm(str(scene_path), use_ik=args.ik,
+                    home_pose_deg=home_deg, ready_pose_deg=ready_deg)
+
     if args.ik:
         log("Jacobian IK 笛卡尔控制已启用")
         log("remote_event 语义: vx/vy/vz 基座系线速度 (与固件 robot_cmd.c 一致)")

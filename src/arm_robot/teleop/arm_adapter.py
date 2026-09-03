@@ -45,10 +45,11 @@ class SimulationArmAdapter:
         self._arm.end_event(*cmd.twist)
 
     def ready(self) -> None:
-        self._arm.soft_reset()
+        self._arm.ready()
 
     def home(self) -> None:
-        self._arm.soft_reset()
+        self._arm.home()
+
 
     def reset(self) -> None:
         self.ready()

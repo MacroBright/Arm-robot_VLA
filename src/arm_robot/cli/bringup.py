@@ -34,22 +34,25 @@ def _print_state(ctrl: ZdtController) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="ZDT 直连 CAN bring-up")
-    ap.add_argument("--iface", default="can0", help="SocketCAN 接口 (默认 can0)")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--iface", default="can0", help="SocketCAN 接口 (默认 can0)")
+
+    ap = argparse.ArgumentParser(description="ZDT 直连 CAN bring-up", parents=[common])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p_status = sub.add_parser("status")
+    p_status = sub.add_parser("status", parents=[common], help="读取电机状态与角度")
     p_status.add_argument("--n", type=int, default=1, help="读取次数")
 
-    p_step = sub.add_parser("step")
+    p_step = sub.add_parser("step", parents=[common], help="单关节步进测试")
     p_step.add_argument("joint", type=int, help="关节 1-6")
     p_step.add_argument("deg", type=float, help="相对角度")
 
-    sub.add_parser("reset")
-    p_torque = sub.add_parser("torque")
+    sub.add_parser("reset", parents=[common], help="软复位")
+    p_torque = sub.add_parser("torque", parents=[common], help="力矩开关 0/1")
     p_torque.add_argument("state", type=int, choices=[0, 1])
-    sub.add_parser("estop")
+    sub.add_parser("estop", parents=[common], help="急停广播")
     args = ap.parse_args()
+
 
     cfg = ZdtConfig(channel=args.iface)
     ctrl = ZdtController(cfg)

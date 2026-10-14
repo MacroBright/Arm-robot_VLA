@@ -1,4 +1,4 @@
-name: arm_robot
+name: tuinadex-control
 channels:
   - conda-forge
   - defaults

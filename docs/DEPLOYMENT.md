@@ -58,19 +58,19 @@ PC (MassageRobot) ──[UART 115200bps]──> STM32F407 ──[CAN 1Mbps]─�
 
 ### 3.1 一键安装与配置
 
-推荐使用独立的 Python 3.10 环境（与灵巧手及大模型训练环境彻底解耦）：
+推荐使用统一的控制环境（Python 3.10）：
 
 #### 方式 A：Conda 一键导入 (推荐)
 ```bash
 cd Arm-robot_VLA
 conda env create -f environment.yml
-conda activate arm_robot
+conda activate tuinadex-control
 ```
 
 #### 方式 B：手动创建与 pip 安装
 ```bash
-conda create -n arm_robot python=3.10 -y
-conda activate arm_robot
+conda create -n tuinadex-control python=3.10 -y
+conda activate tuinadex-control
 
 cd Arm-robot_VLA
 pip install -r requirements.txt
@@ -88,7 +88,7 @@ pip install -e .
    git clone https://github.com/MacroBright/Arm-robot_VLA.git
    cd Arm-robot_VLA
    conda env create -f environment.yml
-   conda activate arm_robot
+   conda activate tuinadex-control
    ```
 3. **验证部署成功**：
    ```bash

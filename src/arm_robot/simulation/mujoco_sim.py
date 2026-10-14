@@ -932,8 +932,8 @@ def status_log(arm: MuJoCoArm, connected: threading.Event,
 def main() -> None:
     if not _HAS_MUJOCO or mujoco is None:
         print("错误: 当前 Python 环境未安装 mujoco。", flush=True)
-        print("💡 提示: 请在专属环境 arm_robot 中运行:", flush=True)
-        print("    conda activate arm_robot && arm-robot sim --viewer", flush=True)
+        print("💡 提示: 请在控制环境 tuinadex-control 中运行:", flush=True)
+        print("    conda activate tuinadex-control && arm-robot sim --viewer", flush=True)
         sys.exit(1)
 
 

@@ -43,7 +43,7 @@ cd ~/win_office/ubantu_files/project/TuinaDex/Arm-robot_VLA
 
 ```bash
 # 激活环境后直接使用统一 CLI (推荐)
-conda activate arm_robot
+conda activate tuinadex-control
 arm-robot control [--iface can0] [--addr 0x02] [--scheme pc|firmware]
 
 # 或直接运行脚本

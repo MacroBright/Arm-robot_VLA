@@ -3,7 +3,7 @@ r"""键盘遥操 IK 末端笛卡尔控制 (P2) — PC 直连 CAN.
 
 用法:
   sudo ip link set can0 type can bitrate 500000 && sudo ip link set can0 up
-  conda activate smolvla && python scripts/control/cartesian_keyboard.py [--iface can0]
+  conda activate tuinadex-control && python scripts/control/cartesian_keyboard.py [--iface can0]
 
 启动流程:
   连接 → 打开遥操窗口 → 打印当前 6 轴状态 (不阻塞) → 进入遥操循环, 不自动回 ready.

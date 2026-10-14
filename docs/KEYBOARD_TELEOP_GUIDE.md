@@ -87,7 +87,7 @@
 
 ```bash
 # 激活环境
-conda activate arm_robot
+conda activate tuinadex-control
 
 # 方式 A：控制真实机械臂
 sudo ip link set can0 type can bitrate 500000 && sudo ip link set can0 up

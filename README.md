@@ -88,11 +88,11 @@
 ```bash
 # 方式 A：Conda 一键创建与安装 (推荐)
 conda env create -f environment.yml
-conda activate arm_robot
+conda activate tuinadex-control
 
 # 方式 B：手动创建与 pip 安装
-conda create -n arm_robot python=3.10 -y
-conda activate arm_robot
+conda create -n tuinadex-control python=3.10 -y
+conda activate tuinadex-control
 cd Arm-robot_VLA
 pip install -r requirements.txt
 pip install -e .

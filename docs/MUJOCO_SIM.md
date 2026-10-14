@@ -42,10 +42,10 @@ MuJoCo 仿真环境完整模拟了 6-DOF 机械臂的物理动力学、关节限
 
 ## 2. 环境准备与依赖安装
 
-机械臂子项目在专属独立环境 **`arm_robot`** (Python 3.10) 中已预装全部 MuJoCo 依赖：
+机械臂子项目在统一控制环境 **`tuinadex-control`** (Python 3.10) 中已预装全部 MuJoCo 依赖：
 
 ```bash
-conda activate arm_robot
+conda activate tuinadex-control
 ```
 
 验证安装：

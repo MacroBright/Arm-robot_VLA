@@ -5,7 +5,7 @@
 供 record_sim.py 录制和 camera_display 显示。
 
 用法 (由 mujoco_sim.py 自动启动):
-  conda activate smolvla && python scripts/camera_server.py --port 5555
+  conda activate tuinadex-control && python scripts/camera_server.py --port 5555
 """
 
 import argparse
